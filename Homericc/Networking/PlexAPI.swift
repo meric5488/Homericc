@@ -58,8 +58,23 @@ struct PlexItem: Identifiable, Decodable, Hashable {
         }
     }
     struct Part: Decodable, Hashable {
+        let id: Int?
         let key: String?
         let container: String?
+        let streams: [PlexStream]?
+
+        enum CodingKeys: String, CodingKey {
+            case id, key, container
+            case streams = "Stream"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = c.lenient(Int.self, .id)
+            key = c.lenient(String.self, .key)
+            container = c.lenient(String.self, .container)
+            streams = c.lenient([PlexStream].self, .streams)
+        }
     }
     struct Tag: Decodable, Hashable { let tag: String }
     struct GuidTag: Decodable, Hashable { let id: String }
@@ -151,6 +166,20 @@ struct PlexItem: Identifiable, Decodable, Hashable {
     }
 }
 
+/// An audio (2) or subtitle (3) track of a file.
+struct PlexStream: Identifiable, Decodable, Hashable {
+    let id: Int
+    let streamType: Int
+    let displayTitle: String?
+    let extendedDisplayTitle: String?
+    let languageTag: String?
+    let selected: Bool?
+
+    var isAudio: Bool { streamType == 2 }
+    var isSubtitle: Bool { streamType == 3 }
+    var label: String { extendedDisplayTitle ?? displayTitle ?? "Piste \(id)" }
+}
+
 struct PlexSection: Identifiable, Decodable, Hashable {
     let key: String
     let title: String
@@ -239,11 +268,13 @@ struct PlexAPI {
 
     /// A URL AVPlayer can open. MP4/MOV files play as they are; anything else (MKV…) is remuxed
     /// by Plex into HLS without re-encoding the video when the codecs allow it.
-    func streamURL(for item: PlexItem, session: String) -> URL? {
+    /// `forceStream` skips direct play, e.g. after choosing another audio track or subtitles,
+    /// which Plex applies when it builds the stream (subtitles are burned into the picture).
+    func streamURL(for item: PlexItem, session: String, forceStream: Bool = false, burnSubtitles: Bool = false) -> URL? {
         guard let ratingKey = item.ratingKey else { return nil }
         let media = item.media?.first
         let container = (media?.parts?.first?.container ?? media?.container ?? "").lowercased()
-        if ["mp4", "m4v", "mov"].contains(container), let partKey = media?.parts?.first?.key {
+        if !forceStream, ["mp4", "m4v", "mov"].contains(container), let partKey = media?.parts?.first?.key {
             return connection.url(partKey, query: [URLQueryItem(name: "X-Plex-Token", value: connection.secret)])
         }
         return connection.url("/video/:/transcode/universal/start.m3u8", query: [
@@ -257,7 +288,7 @@ struct PlexAPI {
             URLQueryItem(name: "directStreamAudio", value: "1"),
             URLQueryItem(name: "videoQuality", value: "100"),
             URLQueryItem(name: "maxVideoBitrate", value: "200000"),
-            URLQueryItem(name: "subtitles", value: "auto"),
+            URLQueryItem(name: "subtitles", value: burnSubtitles ? "burn" : "auto"),
             URLQueryItem(name: "location", value: connection.isUsingRemote ? "wan" : "lan"),
             URLQueryItem(name: "session", value: session),
             URLQueryItem(name: "X-Plex-Session-Identifier", value: session),
@@ -279,6 +310,14 @@ struct PlexAPI {
             URLQueryItem(name: "time", value: String(time)),
             URLQueryItem(name: "duration", value: String(item.duration ?? 0)),
         ])
+    }
+
+    /// Remembers the audio track and subtitles for this file (subtitle 0 turns them off).
+    func select(part: Int, audio: Int? = nil, subtitle: Int? = nil) async throws {
+        var query = [URLQueryItem(name: "allParts", value: "1")]
+        if let audio { query.append(URLQueryItem(name: "audioStreamID", value: String(audio))) }
+        if let subtitle { query.append(URLQueryItem(name: "subtitleStreamID", value: String(subtitle))) }
+        try await connection.perform("PUT", "/library/parts/\(part)", query: query)
     }
 
     func markWatched(_ item: PlexItem) async {
