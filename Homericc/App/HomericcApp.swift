@@ -3,16 +3,32 @@ import SwiftUI
 
 @main
 struct HomericcApp: App {
-    @State private var store = ServiceStore()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var store: ServiceStore
+    @State private var settings: AppSettings
+    @State private var monitor: Monitor
     @State private var navigation = AppNavigation()
     @State private var pathMonitor = NetworkWatcher()
 
+    init() {
+        let store = ServiceStore()
+        let settings = AppSettings()
+        _store = State(initialValue: store)
+        _settings = State(initialValue: settings)
+        _monitor = State(initialValue: Monitor(store: store, settings: settings))
+        AppDelegate.settings = settings
+    }
+
     var body: some Scene {
-        WindowGroup {
+        Window("Homericc", id: "main") {
             RootView()
                 .environment(store)
                 .environment(navigation)
-                .onAppear { pathMonitor.start() }
+                .environment(monitor)
+                .onAppear {
+                    pathMonitor.start()
+                    monitor.start()
+                }
         }
         .defaultSize(width: 1100, height: 720)
 
@@ -25,19 +41,56 @@ struct HomericcApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 720)
 
+        MenuBarExtra(isInserted: $settings.showInMenuBar) {
+            MenuBarView()
+                .environment(store)
+                .environment(navigation)
+                .environment(monitor)
+                .onAppear { monitor.start() }
+        } label: {
+            Label("Homericc", systemImage: monitor.offline.isEmpty ? "play.house.fill" : "exclamationmark.triangle.fill")
+        }
+        .menuBarExtraStyle(.window)
+
         Settings {
             SettingsView()
                 .environment(store)
                 .environment(navigation)
+                .environment(settings)
         }
+    }
+}
+
+/// Dock icon on or off, and staying alive in the menu bar when the window is closed.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var settings: AppSettings?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.applyDockPolicy()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !(Self.settings?.showInMenuBar ?? false)
+    }
+
+    /// Clicking the Dock icon (or reopening from Finder) brings the window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        true
+    }
+
+    static func applyDockPolicy() {
+        guard let settings else { return }
+        // Without the menu bar item the Dock icon is the only way back to the app.
+        let showDock = settings.showInDock || !settings.showInMenuBar
+        NSApp.setActivationPolicy(showDock ? .regular : .accessory)
     }
 }
 
 @Observable
 final class AppNavigation {
     var selection: SidebarItem? = .home
-    /// The service shown when the Settings window opens.
-    var settingsSelection: ServiceKind? = .radarr
+    /// The page shown when the Settings window opens.
+    var settingsSelection: SettingsPage? = .general
     /// Counts shown next to sidebar items.
     var badges: [SidebarItem: Int] = [:]
 }

@@ -53,7 +53,7 @@ struct NotConfiguredView: View {
             Text("Ajoute l'adresse et la clé du serveur dans les réglages.")
         } actions: {
             Button("Ouvrir les réglages…") {
-                navigation.settingsSelection = kinds.first
+                navigation.settingsSelection = kinds.first.map(SettingsPage.service)
                 openSettings()
             }
                 .buttonStyle(.borderedProminent)

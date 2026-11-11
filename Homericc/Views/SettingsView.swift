@@ -1,6 +1,11 @@
 import SwiftUI
 
-/// The Settings window (⌘,): one page per service.
+enum SettingsPage: Hashable {
+    case general
+    case service(ServiceKind)
+}
+
+/// The Settings window (⌘,): general options, then one page per service.
 struct SettingsView: View {
     @Environment(ServiceStore.self) private var store
     @Environment(AppNavigation.self) private var navigation
@@ -9,22 +14,61 @@ struct SettingsView: View {
         @Bindable var navigation = navigation
         NavigationSplitView {
             List(selection: $navigation.settingsSelection) {
+                Label("Général", systemImage: "gearshape")
+                    .tag(SettingsPage.general)
                 Section("Services") {
                     ForEach(ServiceKind.allCases) { kind in
                         ServiceRow(kind: kind, isConfigured: store.isConfigured(kind))
-                            .tag(kind)
+                            .tag(SettingsPage.service(kind))
                     }
                 }
             }
             .navigationSplitViewColumnWidth(190)
             .toolbar(removing: .sidebarToggle)
         } detail: {
-            if let kind = navigation.settingsSelection {
+            switch navigation.settingsSelection {
+            case .general?:
+                GeneralSettingsView()
+            case .service(let kind)?:
                 ServiceEditView(kind: kind)
                     .id(kind)
+            case nil:
+                EmptyView()
             }
         }
-        .frame(width: 720, height: 520)
+        .frame(width: 720, height: 560)
+    }
+}
+
+private struct GeneralSettingsView: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+        Form {
+            Section {
+                Toggle("Afficher dans la barre des menus", isOn: $settings.showInMenuBar)
+                Toggle("Afficher dans le Dock", isOn: $settings.showInDock)
+                    .disabled(!settings.showInMenuBar)
+            } header: {
+                Text("Présence")
+            } footer: {
+                Text("Dans la barre des menus, Homericc reste ouvert quand tu fermes sa fenêtre et continue de surveiller tes serveurs. Sans la barre des menus, l'icône du Dock reste affichée.")
+            }
+            Section {
+                Toggle("Téléchargement terminé", isOn: $settings.notifyDownloads)
+                Toggle("Nouvelle demande Seerr", isOn: $settings.notifyRequests)
+                Toggle("Service hors ligne", isOn: $settings.notifyOffline)
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Les serveurs sont vérifiés toutes les 30 secondes tant que Homericc est ouvert.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Général")
+        .onChange(of: settings.showInDock) { AppDelegate.applyDockPolicy() }
+        .onChange(of: settings.showInMenuBar) { AppDelegate.applyDockPolicy() }
     }
 }
 
