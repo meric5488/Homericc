@@ -71,6 +71,16 @@ struct SeerrMediaDetails: Decodable {
     let title: String?
     let name: String?
     let posterPath: String?
+    let releaseDate: String?
+    let firstAirDate: String?
+    let nextEpisodeToAir: Episode?
+
+    struct Episode: Decodable {
+        let airDate: String?
+        let seasonNumber: Int?
+        let episodeNumber: Int?
+        let name: String?
+    }
     var displayTitle: String { title ?? name ?? "Sans titre" }
 }
 
@@ -113,8 +123,12 @@ struct SeerrAPI {
     }
 
     func request(_ result: SeerrSearchResult) async throws {
-        var body: [String: Any] = ["mediaType": result.mediaType, "mediaId": result.id]
-        if result.mediaType == "tv" { body["seasons"] = "all" }
+        try await request(mediaType: result.mediaType, tmdbID: result.id)
+    }
+
+    func request(mediaType: String, tmdbID: Int) async throws {
+        var body: [String: Any] = ["mediaType": mediaType, "mediaId": tmdbID]
+        if mediaType == "tv" { body["seasons"] = "all" }
         try await connection.perform("POST", "/api/v1/request", json: body)
     }
 }

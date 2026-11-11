@@ -7,6 +7,8 @@ Les services se configurent dans **Réglages** (⌘,).
 
 | Service | Ce que fait Homericc |
 |---|---|
+| Recherche | Un seul champ pour films, séries, artistes et albums : ajout direct ou demande via Seerr |
+| Calendrier | Sorties à venir : épisodes (Sonarr), films (Radarr), albums (Lidarr), demandes Seerr |
 | Radarr, Sonarr, Lidarr | Bibliothèque (tri, filtres), ajout depuis la recherche, surveillance, recherche manuelle, suppression |
 | Seerr | Demandes en attente (approuver / refuser), recherche et nouvelles demandes |
 | Prowlarr | État des indexeurs, test, recherche de releases et envoi au client |

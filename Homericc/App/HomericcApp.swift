@@ -32,13 +32,15 @@ final class AppNavigation {
 }
 
 enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
-    case home, movies, series, music, requests, downloads, indexers
+    case home, search, calendar, movies, series, music, requests, downloads, indexers
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .home: "Accueil"
+        case .search: "Rechercher"
+        case .calendar: "Calendrier"
         case .movies: "Films"
         case .series: "Séries"
         case .music: "Musique"
@@ -51,7 +53,7 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
     /// The service behind the screen; the dashboard aggregates all of them.
     var service: ServiceKind? {
         switch self {
-        case .home: nil
+        case .home, .search, .calendar: nil
         case .movies: .radarr
         case .series: .sonarr
         case .music: .lidarr
@@ -61,10 +63,17 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         }
     }
 
-    var symbol: String { service?.symbol ?? "house" }
+    var symbol: String {
+        switch self {
+        case .home: "house"
+        case .search: "magnifyingglass"
+        case .calendar: "calendar"
+        default: service?.symbol ?? "circle"
+        }
+    }
 
     static let sections: [(String?, [SidebarItem])] = [
-        (nil, [.home]),
+        (nil, [.home, .search, .calendar]),
         ("Bibliothèque", [.movies, .series, .music]),
         ("Serveur", [.requests, .downloads, .indexers]),
     ]
@@ -119,6 +128,8 @@ struct RootView: View {
     @ViewBuilder private func detail(for item: SidebarItem) -> some View {
         switch item {
         case .home: DashboardView()
+        case .search: SearchView()
+        case .calendar: CalendarView()
         case .movies: LibraryView(kind: .radarr)
         case .series: LibraryView(kind: .sonarr)
         case .music: LibraryView(kind: .lidarr)

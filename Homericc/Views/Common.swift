@@ -18,11 +18,12 @@ enum Loadable<Value> {
 struct PosterImage: View {
     let url: URL?
     var symbol = "photo"
+    var aspectRatio: CGFloat = 2 / 3
 
     var body: some View {
         Rectangle()
             .fill(.fill.tertiary)
-            .aspectRatio(2 / 3, contentMode: .fit)
+            .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay {
                 AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
                     if let image = phase.image {

@@ -102,7 +102,7 @@ struct ArrAPI {
         default: "artist"
         }
     }
-    private func path(_ tail: String) -> String { "/api/\(version)/\(tail)" }
+    fileprivate func path(_ tail: String) -> String { "/api/\(version)/\(tail)" }
 
     func library() async throws -> [ArrItem] {
         try await items(path(resource))
@@ -172,11 +172,71 @@ struct ArrAPI {
         try await connection.perform("POST", path("command"), json: command)
     }
 
-    private func items(_ path: String, query: [URLQueryItem] = []) async throws -> [ArrItem] {
+    fileprivate func items(_ path: String, query: [URLQueryItem] = []) async throws -> [ArrItem] {
         let data = try await connection.data(path, query: query)
         guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             throw ServiceError.invalidResponse(kind)
         }
         return list.map { ArrItem(kind: kind, raw: $0) }
+    }
+}
+
+// MARK: - Albums (Lidarr)
+
+extension ArrItem {
+    /// Lidarr album lookups return albums with their artist embedded.
+    var isAlbum: Bool { kind == .lidarr && raw["albumType"] != nil }
+    var artistName: String? { (raw["artist"] as? [String: Any])?["artistName"] as? String }
+    var releaseYear: Int? {
+        year ?? (raw["releaseDate"] as? String).flatMap { Int($0.prefix(4)) }
+    }
+    var tmdbID: Int? { (raw["tmdbId"] as? Int).flatMap { $0 > 0 ? $0 : nil } }
+}
+
+extension ArrAPI {
+    func lookupAlbums(_ term: String) async throws -> [ArrItem] {
+        try await items(path("album/lookup"), query: [URLQueryItem(name: "term", value: term)])
+    }
+
+    /// Adds an album, creating its artist (without monitoring the rest of the discography) when needed.
+    func addAlbum(_ album: ArrItem, qualityProfile: Int, metadataProfile: Int, rootFolder: String,
+                  searchNow: Bool) async throws {
+        if let id = album.libraryID, id > 0 {
+            try await connection.perform("PUT", path("album/monitor"), json: ["albumIds": [id], "monitored": true])
+            if searchNow {
+                try await connection.perform("POST", path("command"), json: ["name": "AlbumSearch", "albumIds": [id]])
+            }
+            return
+        }
+        var artist = album.raw["artist"] as? [String: Any] ?? [:]
+        if (artist["id"] as? Int ?? 0) == 0 {
+            artist["qualityProfileId"] = qualityProfile
+            artist["metadataProfileId"] = metadataProfile
+            artist["rootFolderPath"] = rootFolder
+            artist["monitored"] = true
+            artist["monitorNewItems"] = "none"
+            artist["addOptions"] = ["monitor": "none", "searchForMissingAlbums": false]
+        }
+        var body = album.raw
+        body["artist"] = artist
+        body["monitored"] = true
+        body["addOptions"] = ["searchForNewAlbum": searchNow]
+        try await connection.perform("POST", path("album"), json: body)
+    }
+
+    /// Items with a release in the range: episodes (Sonarr), movies (Radarr) or albums (Lidarr).
+    func calendar(from start: Date, to end: Date) async throws -> [[String: Any]] {
+        let format = Date.ISO8601FormatStyle()
+        let data = try await connection.data(path("calendar"), query: [
+            URLQueryItem(name: "start", value: start.formatted(format)),
+            URLQueryItem(name: "end", value: end.formatted(format)),
+            URLQueryItem(name: "unmonitored", value: "false"),
+            URLQueryItem(name: "includeSeries", value: "true"),
+            URLQueryItem(name: "includeArtist", value: "true"),
+        ])
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError.invalidResponse(kind)
+        }
+        return list
     }
 }

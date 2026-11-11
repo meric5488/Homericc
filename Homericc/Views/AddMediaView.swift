@@ -85,7 +85,7 @@ private struct SearchResultRow: View {
     }
 }
 
-private struct AddOptionsView: View {
+struct AddOptionsView: View {
     let api: ArrAPI
     let item: ArrItem
     let onAdded: () -> Void
@@ -141,9 +141,14 @@ private struct AddOptionsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Ajouter") {
                         runner.run {
-                            try await api.add(item, qualityProfile: profileID,
-                                              metadataProfile: api.kind == .lidarr ? metadataProfileID : nil,
-                                              rootFolder: folderPath, searchNow: searchNow)
+                            if item.isAlbum {
+                                try await api.addAlbum(item, qualityProfile: profileID, metadataProfile: metadataProfileID,
+                                                       rootFolder: folderPath, searchNow: searchNow)
+                            } else {
+                                try await api.add(item, qualityProfile: profileID,
+                                                  metadataProfile: api.kind == .lidarr ? metadataProfileID : nil,
+                                                  rootFolder: folderPath, searchNow: searchNow)
+                            }
                             onAdded()
                         }
                     }
