@@ -15,16 +15,18 @@ struct PlayerView: View {
     @State private var hideTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .topLeading) {
             Color.black
             if let model {
                 AVPlayerViewBridge(player: model.player)
-                // Top trailing: the window's own buttons stay free on the leading side.
+                // Top leading, after the window buttons: the player keeps its own controls
+                // (Picture in Picture, full screen) free on the trailing side.
                 HStack(spacing: 12) {
-                    if model.hasTrackChoices { TrackMenus(model: model) }
                     if onClose != nil { windowControls(model) }
+                    if model.hasTrackChoices { TrackMenus(model: model) }
                 }
-                .padding(16)
+                .padding(.top, 14)
+                .padding(.leading, 84)
                 .opacity(controlsVisible ? 1 : 0)
                 .animation(.easeOut(duration: 0.25), value: controlsVisible)
                 if model.isRestarting {
@@ -248,6 +250,8 @@ final class PlayerModel {
 private struct AVPlayerViewBridge: NSViewRepresentable {
     let player: AVPlayer
 
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
         view.player = player
@@ -255,10 +259,29 @@ private struct AVPlayerViewBridge: NSViewRepresentable {
         view.showsFullScreenToggleButton = true
         view.allowsPictureInPicturePlayback = true
         view.showsSharingServiceButton = false
+        view.pictureInPictureDelegate = context.coordinator
         return view
     }
 
     func updateNSView(_ view: AVPlayerView, context: Context) {
         if view.player !== player { view.player = player }
+    }
+
+    /// Keeps the video playing in the floating window and puts it back in the app when it closes.
+    final class Coordinator: NSObject, AVPlayerViewPictureInPictureDelegate {
+        func playerViewShouldAutomaticallyDismissAtPicture(inPictureStart playerView: AVPlayerView) -> Bool {
+            false
+        }
+
+        func playerView(_ playerView: AVPlayerView, failedToStartPictureInPictureWithError error: any Error) {
+            networkLog.error("Picture in Picture failed: \(String(describing: error), privacy: .public)")
+        }
+
+        func playerView(_ playerView: AVPlayerView,
+                        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+            NSApp.activate()
+            playerView.window?.makeKeyAndOrderFront(nil)
+            completionHandler(true)
+        }
     }
 }
