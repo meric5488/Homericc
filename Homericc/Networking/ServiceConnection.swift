@@ -1,4 +1,8 @@
 import Foundation
+import OSLog
+
+/// Diagnostics, readable with `log show --predicate 'subsystem == "com.meric5488.Homericc"'`. Never logs secrets or URLs with tokens.
+let networkLog = Logger(subsystem: "com.meric5488.Homericc", category: "network")
 
 nonisolated enum ServiceError: LocalizedError {
     case notConfigured(ServiceKind)
@@ -135,6 +139,9 @@ final class ServiceConnection {
             activeBase = base
 
             guard let http = response.1 as? HTTPURLResponse else { throw ServiceError.invalidResponse(kind) }
+            if !(200..<300).contains(http.statusCode) {
+                networkLog.error("\(self.kind.name, privacy: .public): HTTP \(http.statusCode) for \(method, privacy: .public) \(path, privacy: .public)")
+            }
             switch http.statusCode {
             case 200..<300: return response.0
             case 401, 403: throw ServiceError.unauthorized(kind)
@@ -177,6 +184,7 @@ final class ServiceConnection {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            networkLog.error("\(self.kind.name, privacy: .public): cannot decode \(String(describing: T.self), privacy: .public): \(String(describing: error), privacy: .public)")
             throw ServiceError.invalidResponse(kind)
         }
     }

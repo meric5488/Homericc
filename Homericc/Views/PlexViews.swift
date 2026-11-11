@@ -279,7 +279,7 @@ struct PlexDetailView: View {
                             .textSelection(.enabled)
                             .frame(maxWidth: 820, alignment: .leading)
                     }
-                    if shown.type == "show" || shown.type == "season" {
+                    if showKey != nil {
                         episodesSection
                     }
                 }
@@ -382,7 +382,7 @@ struct PlexDetailView: View {
             }
         }
         .task(id: selectedSeason) {
-            guard let selectedSeason, let season = seasons.first(where: { $0.ratingKey == selectedSeason }) ?? (shown.type == "season" ? shown : nil) else { return }
+            guard let selectedSeason, let season = seasons.first(where: { $0.ratingKey == selectedSeason }) else { return }
             await loadEpisodes(of: season)
         }
     }
@@ -393,7 +393,7 @@ struct PlexDetailView: View {
         do {
             var list = try await api.children(of: seasonKey).filter { $0.type == "episode" }
             // Some libraries file episodes oddly: fall back to the show's full episode list.
-            if list.isEmpty, let showKey = season.parentRatingKey ?? item.ratingKey {
+            if list.isEmpty, let showKey = season.parentRatingKey ?? self.showKey {
                 list = try await api.allEpisodes(of: showKey).filter { $0.parentIndex == season.index }
             }
             episodes = list
@@ -403,31 +403,40 @@ struct PlexDetailView: View {
         episodesLoaded = true
     }
 
+    /// The show this page belongs to, whether it was opened from the show, a season or an episode.
+    private var showKey: String? {
+        switch shown.type {
+        case "show": shown.ratingKey
+        case "season": shown.parentRatingKey
+        case "episode": shown.grandparentRatingKey
+        default: nil
+        }
+    }
+
     private func load() async {
         guard let ratingKey = item.ratingKey else { return }
         full = try? await api.item(ratingKey)
-        switch shown.type {
-        case "show":
-            do {
-                let children = try await api.children(of: ratingKey)
-                seasons = children.filter { $0.type == "season" }
-                if seasons.isEmpty {
-                    // "Hide seasons for single-season shows": the show lists its episodes directly.
-                    let direct = children.filter { $0.type == "episode" }
-                    episodes = direct.isEmpty ? try await api.allEpisodes(of: ratingKey) : direct
-                    episodesLoaded = true
-                } else {
-                    selectedSeason = (seasons.first { !$0.isWatched } ?? seasons.first)?.ratingKey
-                }
-            } catch {
-                episodesError = error.localizedDescription
+        guard let showKey else { return }
+        do {
+            let children = try await api.children(of: showKey)
+            seasons = children.filter { $0.type == "season" }
+            if seasons.isEmpty {
+                // "Hide seasons for single-season shows": the show lists its episodes directly.
+                let direct = children.filter { $0.type == "episode" }
+                episodes = direct.isEmpty ? try await api.allEpisodes(of: showKey) : direct
                 episodesLoaded = true
+                return
             }
-        case "season":
-            seasons = [shown]
-            selectedSeason = ratingKey
-        default:
-            break
+            let preferred: String? = switch shown.type {
+            case "season": shown.ratingKey
+            case "episode": shown.parentRatingKey
+            default: nil
+            }
+            selectedSeason = preferred.flatMap { key in seasons.first { $0.ratingKey == key }?.ratingKey }
+                ?? (seasons.first { !$0.isWatched } ?? seasons.first)?.ratingKey
+        } catch {
+            episodesError = error.localizedDescription
+            episodesLoaded = true
         }
     }
 
