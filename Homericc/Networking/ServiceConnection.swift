@@ -156,6 +156,9 @@ final class ServiceConnection {
         case .login:
             // qBittorrent rejects requests whose Referer doesn't match its host (CSRF protection).
             request.setValue(base.absoluteString, forHTTPHeaderField: "Referer")
+            // Seedboxes (Swizzin…) put qBittorrent behind nginx HTTP Basic auth with the same credentials.
+            let basic = Data("\(config.username):\(secret)".utf8).base64EncodedString()
+            request.setValue("Basic \(basic)", forHTTPHeaderField: "Authorization")
         }
     }
 
@@ -163,8 +166,9 @@ final class ServiceConnection {
         let body = Self.formEncoded(["username": config.username, "password": secret])
         let data = try await rawData("/api/v2/auth/login", method: "POST", query: [], body: body,
                                      contentType: "application/x-www-form-urlencoded")
-        guard String(decoding: data, as: UTF8.self).hasPrefix("Ok") else {
-            throw ServiceError.unauthorized(kind)
+        if !String(decoding: data, as: UTF8.self).hasPrefix("Ok") {
+            // Behind a proxy, qBittorrent often skips its own login (trusted local clients): check the API answers.
+            _ = try await rawData("/api/v2/app/version", method: "GET", query: [], body: nil, contentType: nil)
         }
         didLogin = true
     }
