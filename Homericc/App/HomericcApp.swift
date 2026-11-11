@@ -91,6 +91,8 @@ final class AppNavigation {
     var selection: SidebarItem? = .home
     /// The page shown when the Settings window opens.
     var settingsSelection: SettingsPage? = .general
+    /// What plays inside the main window, over everything else.
+    var playing: PlexPlayback?
     /// Counts shown next to sidebar items.
     var badges: [SidebarItem: Int] = [:]
 }
@@ -168,9 +170,27 @@ struct RootView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServiceStore.self) private var store
 
+    @Environment(\.openWindow) private var openWindow
+
     var body: some View {
+        ZStack {
+            splitView
+                .toolbar(navigation.playing == nil ? .visible : .hidden, for: .windowToolbar)
+            if let playing = navigation.playing {
+                PlayerView(playback: playing, onClose: { navigation.playing = nil }) { detached in
+                    navigation.playing = nil
+                    openWindow(value: detached)
+                }
+                .id(playing)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: navigation.playing)
+    }
+
+    private var splitView: some View {
         @Bindable var navigation = navigation
-        NavigationSplitView {
+        return NavigationSplitView {
             List(selection: $navigation.selection) {
                 ForEach(SidebarItem.sections, id: \.1) { title, items in
                     Section {

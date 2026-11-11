@@ -5,6 +5,9 @@ import SwiftUI
 /// audio and subtitle menus float above the video while the pointer moves.
 struct PlayerView: View {
     let playback: PlexPlayback
+    /// Set when the player is embedded in the main window.
+    var onClose: (() -> Void)?
+    var onDetach: ((PlexPlayback) -> Void)?
     @Environment(ServiceStore.self) private var store
     @State private var model: PlayerModel?
     @State private var error: String?
@@ -16,12 +19,14 @@ struct PlayerView: View {
             Color.black
             if let model {
                 AVPlayerViewBridge(player: model.player)
-                if model.hasTrackChoices {
-                    TrackMenus(model: model)
-                        .padding(16)
-                        .opacity(controlsVisible ? 1 : 0)
-                        .animation(.easeOut(duration: 0.25), value: controlsVisible)
+                // Top trailing: the window's own buttons stay free on the leading side.
+                HStack(spacing: 12) {
+                    if model.hasTrackChoices { TrackMenus(model: model) }
+                    if onClose != nil { windowControls(model) }
                 }
+                .padding(16)
+                .opacity(controlsVisible ? 1 : 0)
+                .animation(.easeOut(duration: 0.25), value: controlsVisible)
                 if model.isRestarting {
                     ProgressView().controlSize(.large).tint(.white)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -37,11 +42,33 @@ struct PlayerView: View {
         }
         .ignoresSafeArea()
         .navigationTitle(playback.title)
+        .onExitCommand { onClose?() }
         .onContinuousHover { phase in
             if case .active = phase { showControls() }
         }
         .task { await start() }
         .onDisappear { model?.stop() }
+    }
+
+    private func windowControls(_ model: PlayerModel) -> some View {
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                Button { onClose?() } label: {
+                    Label("Fermer", systemImage: "xmark")
+                }
+                .help("Fermer la lecture (Échap)")
+                Button {
+                    onDetach?(PlexPlayback(ratingKey: playback.ratingKey, title: playback.title,
+                                           startOffset: model.currentMilliseconds))
+                } label: {
+                    Label("Détacher", systemImage: "macwindow.on.rectangle")
+                }
+                .help("Continuer dans une fenêtre séparée")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.glass)
+            .controlSize(.large)
+        }
     }
 
     private func showControls() {
@@ -192,7 +219,7 @@ final class PlayerModel {
         }
     }
 
-    private var currentMilliseconds: Int {
+    var currentMilliseconds: Int {
         let seconds = player.currentTime().seconds
         return seconds.isFinite ? Int(seconds * 1000) : 0
     }

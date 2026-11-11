@@ -264,7 +264,7 @@ struct PlexDetailView: View {
     @State private var episodes: [PlexItem] = []
     @State private var episodesError: String?
     @State private var episodesLoaded = false
-    @Environment(\.openWindow) private var openWindow
+    @Environment(AppNavigation.self) private var navigation
 
     private var shown: PlexItem { full ?? item }
 
@@ -442,7 +442,7 @@ struct PlexDetailView: View {
 
     private func play(_ item: PlexItem) {
         guard let ratingKey = item.ratingKey else { return }
-        openWindow(value: PlexPlayback(ratingKey: ratingKey, title: item.headline, startOffset: item.viewOffset ?? 0))
+        navigation.playing = PlexPlayback(ratingKey: ratingKey, title: item.headline, startOffset: item.viewOffset ?? 0)
     }
 }
 

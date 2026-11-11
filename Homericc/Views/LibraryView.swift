@@ -183,7 +183,7 @@ struct ArrItemDetailView: View {
     @State private var plexItem: PlexItem?
     @Environment(\.dismiss) private var dismiss
     @Environment(ServiceStore.self) private var store
-    @Environment(\.openWindow) private var openWindow
+    @Environment(AppNavigation.self) private var navigation
 
     private var plex: PlexAPI? { store.connection(for: .plex).map(PlexAPI.init) }
 
@@ -294,7 +294,7 @@ struct ArrItemDetailView: View {
 
     private func play(_ item: PlexItem) {
         guard let ratingKey = item.ratingKey else { return }
-        openWindow(value: PlexPlayback(ratingKey: ratingKey, title: item.headline, startOffset: item.viewOffset ?? 0))
+        navigation.playing = PlexPlayback(ratingKey: ratingKey, title: item.headline, startOffset: item.viewOffset ?? 0)
     }
 
     private func fact(_ label: String, _ value: String) -> some View {
