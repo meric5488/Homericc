@@ -34,6 +34,8 @@ struct PlexItem: Identifiable, Decodable, Hashable {
     let player: PlayerInfo?
     let media: [Media]?
     let genres: [Tag]?
+    /// External ids, e.g. "tmdb://603", "tvdb://81189", "imdb://tt0133093" (with includeGuids=1).
+    let guids: [GuidTag]?
 
     struct Account: Decodable, Hashable { let title: String? }
     struct PlayerInfo: Decodable, Hashable {
@@ -60,13 +62,14 @@ struct PlexItem: Identifiable, Decodable, Hashable {
         let container: String?
     }
     struct Tag: Decodable, Hashable { let tag: String }
+    struct GuidTag: Decodable, Hashable { let id: String }
 
     enum CodingKeys: String, CodingKey {
         case ratingKey, sessionKey, key, type, title, grandparentTitle, parentTitle, grandparentRatingKey, parentRatingKey, year,
              summary, thumb, art, grandparentThumb, grandparentArt, parentThumb, index, parentIndex, viewOffset,
              viewCount, leafCount, viewedLeafCount, childCount, duration, addedAt, contentRating, studio,
              audienceRating, originallyAvailableAt
-        case user = "User", player = "Player", media = "Media", genres = "Genre"
+        case user = "User", player = "Player", media = "Media", genres = "Genre", guids = "Guid"
     }
 
     /// Lenient: a field Plex sends in an unexpected shape is dropped instead of failing the whole list.
@@ -105,6 +108,7 @@ struct PlexItem: Identifiable, Decodable, Hashable {
         player = c.lenient(PlayerInfo.self, .player)
         media = c.lenient([Media].self, .media)
         genres = c.lenient([Tag].self, .genres)
+        guids = c.lenient([GuidTag].self, .guids)
     }
 
     var id: String { sessionKey ?? ratingKey ?? title ?? "" }
@@ -203,8 +207,10 @@ struct PlexAPI {
         return (envelope.MediaContainer.Directory ?? []).filter { !$0.key.isEmpty }
     }
 
-    func items(in section: PlexSection, sort: String = "titleSort") async throws -> [PlexItem] {
-        try await metadata("/library/sections/\(section.key)/all", query: [URLQueryItem(name: "sort", value: sort)])
+    func items(in section: PlexSection, sort: String = "titleSort", includeGuids: Bool = false) async throws -> [PlexItem] {
+        var query = [URLQueryItem(name: "sort", value: sort)]
+        if includeGuids { query.append(URLQueryItem(name: "includeGuids", value: "1")) }
+        return try await metadata("/library/sections/\(section.key)/all", query: query)
     }
 
     func recentlyAdded(in section: PlexSection) async throws -> [PlexItem] {

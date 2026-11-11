@@ -254,3 +254,42 @@ extension ArrAPI {
         return list
     }
 }
+
+// MARK: - Episodes (Sonarr)
+
+struct SonarrEpisode: Identifiable, Decodable {
+    let id: Int
+    let seasonNumber: Int
+    let episodeNumber: Int
+    let title: String?
+    let overview: String?
+    let airDateUtc: String?
+    let hasFile: Bool
+    let monitored: Bool
+
+    var airDate: Date? { airDateUtc.flatMap { try? Date($0, strategy: .iso8601) } }
+    var hasAired: Bool { (airDate ?? .distantFuture) <= .now }
+    var code: String { String(format: "S%02dE%02d", seasonNumber, episodeNumber) }
+}
+
+extension ArrAPI {
+    func episodes(of series: ArrItem) async throws -> [SonarrEpisode] {
+        guard let id = series.libraryID else { return [] }
+        return try await connection.get(path("episode"), query: [URLQueryItem(name: "seriesId", value: String(id))])
+    }
+
+    func setMonitored(_ episodes: [SonarrEpisode], _ monitored: Bool) async throws {
+        try await connection.perform("PUT", path("episode/monitor"),
+                                     json: ["episodeIds": episodes.map(\.id), "monitored": monitored])
+    }
+
+    func search(_ episodes: [SonarrEpisode]) async throws {
+        try await connection.perform("POST", path("command"), json: ["name": "EpisodeSearch", "episodeIds": episodes.map(\.id)])
+    }
+
+    func searchSeason(_ series: ArrItem, season: Int) async throws {
+        guard let id = series.libraryID else { return }
+        try await connection.perform("POST", path("command"),
+                                     json: ["name": "SeasonSearch", "seriesId": id, "seasonNumber": season])
+    }
+}

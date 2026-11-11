@@ -180,7 +180,12 @@ struct ArrItemDetailView: View {
     @State private var runner = ActionRunner()
     @State private var confirmDelete = false
     @State private var searchStarted = false
+    @State private var plexItem: PlexItem?
     @Environment(\.dismiss) private var dismiss
+    @Environment(ServiceStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
+
+    private var plex: PlexAPI? { store.connection(for: .plex).map(PlexAPI.init) }
 
     var body: some View {
         ScrollView {
@@ -237,7 +242,20 @@ struct ArrItemDetailView: View {
                     Text(item.facts.joined(separator: " · "))
                         .font(.title3)
                         .foregroundStyle(.secondary)
-                    StatusBadge(item: item)
+                    HStack(spacing: 12) {
+                        StatusBadge(item: item)
+                        if item.kind == .radarr, let plexItem {
+                            Button { play(plexItem) } label: {
+                                Label((plexItem.viewOffset ?? 0) > 0 ? "Reprendre dans Plex" : "Lire dans Plex",
+                                      systemImage: "play.fill")
+                                    .font(.headline)
+                                    .padding(.horizontal, 6)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .buttonBorderShape(.capsule)
+                            .controlSize(.large)
+                        }
+                    }
                 }
                 .padding(.bottom, 6)
             }
@@ -263,7 +281,20 @@ struct ArrItemDetailView: View {
                 if let path = item.raw["path"] as? String { fact("Dossier", path) }
             }
             .font(.callout)
+
+            if item.kind == .sonarr {
+                SonarrEpisodesSection(api: api, series: item, plexShow: plexItem, plex: plex) { play($0) }
+            }
         }
+        .task {
+            guard let plex, item.kind != .lidarr else { return }
+            plexItem = await PlexIndex.shared.match(item, api: plex)
+        }
+    }
+
+    private func play(_ item: PlexItem) {
+        guard let ratingKey = item.ratingKey else { return }
+        openWindow(value: PlexPlayback(ratingKey: ratingKey, title: item.headline, startOffset: item.viewOffset ?? 0))
     }
 
     private func fact(_ label: String, _ value: String) -> some View {
@@ -337,5 +368,176 @@ private struct StatusBadge: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(color.opacity(0.15), in: .capsule)
+    }
+}
+
+/// Sonarr's episodes for a series, by season, with search and Plex playback.
+private struct SonarrEpisodesSection: View {
+    let api: ArrAPI
+    let series: ArrItem
+    let plexShow: PlexItem?
+    let plex: PlexAPI?
+    let play: (PlexItem) -> Void
+
+    @State private var episodes: Loadable<[SonarrEpisode]> = .idle
+    @State private var season: Int?
+    @State private var plexEpisodes: [Int: PlexItem] = [:]
+    @State private var searched: Set<Int> = []
+    @State private var runner = ActionRunner()
+
+    private var seasons: [Int] {
+        Array(Set((episodes.value ?? []).map(\.seasonNumber))).sorted { a, b in
+            // Specials (season 0) last.
+            a == 0 ? false : (b == 0 ? true : a < b)
+        }
+    }
+
+    private var shown: [SonarrEpisode] {
+        (episodes.value ?? []).filter { $0.seasonNumber == season }.sorted { $0.episodeNumber < $1.episodeNumber }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Épisodes").font(.title2.bold())
+                Spacer()
+                if let season {
+                    Button {
+                        runner.run {
+                            try await api.searchSeason(series, season: season)
+                            searched.formUnion(shown.filter { !$0.hasFile }.map(\.id))
+                        }
+                    } label: {
+                        Label("Rechercher la saison", systemImage: "magnifyingglass")
+                    }
+                    .disabled(shown.allSatisfy(\.hasFile))
+                }
+                if seasons.count > 1 {
+                    Picker("Saison", selection: $season) {
+                        ForEach(seasons, id: \.self) { number in
+                            Text(number == 0 ? "Épisodes spéciaux" : "Saison \(number)").tag(Int?.some(number))
+                        }
+                    }
+                    .fixedSize()
+                }
+            }
+
+            switch episodes {
+            case .idle, .loading:
+                ProgressView().frame(maxWidth: .infinity)
+            case .failed(let message):
+                Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            case .loaded:
+                VStack(spacing: 0) {
+                    ForEach(shown) { episode in
+                        SonarrEpisodeRow(episode: episode, plexEpisode: plexEpisodes[episode.id],
+                                         searched: searched.contains(episode.id), play: play) {
+                            runner.run {
+                                try await api.search([episode])
+                                searched.insert(episode.id)
+                            }
+                        } toggleMonitored: {
+                            runner.run {
+                                try await api.setMonitored([episode], !episode.monitored)
+                                await load()
+                            }
+                        }
+                        if episode.id != shown.last?.id { Divider() }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .background(.fill.quaternary, in: .rect(cornerRadius: 14))
+            }
+        }
+        .errorAlert(runner)
+        .task { await load() }
+        .task(id: "\(season ?? -1)-\(plexShow?.ratingKey ?? "")") { await matchPlex() }
+    }
+
+    private func load() async {
+        do {
+            let list = try await api.episodes(of: series)
+            episodes = .loaded(list)
+            if season == nil {
+                // Start on the latest season with aired episodes.
+                let aired = Set(list.filter(\.hasAired).map(\.seasonNumber)).filter { $0 > 0 }
+                season = aired.max() ?? seasons.first
+            }
+        } catch {
+            episodes = .failed(error.localizedDescription)
+        }
+    }
+
+    private func matchPlex() async {
+        guard let plexShow, let plex else { return }
+        for episode in shown where episode.hasFile && plexEpisodes[episode.id] == nil {
+            plexEpisodes[episode.id] = await PlexIndex.shared.episode(show: plexShow, season: episode.seasonNumber,
+                                                                      number: episode.episodeNumber, api: plex)
+        }
+    }
+}
+
+private struct SonarrEpisodeRow: View {
+    let episode: SonarrEpisode
+    let plexEpisode: PlexItem?
+    let searched: Bool
+    let play: (PlexItem) -> Void
+    let search: () -> Void
+    let toggleMonitored: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("\(episode.episodeNumber)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 28, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(episode.title ?? "Épisode \(episode.episodeNumber)").lineLimit(1)
+                if let date = episode.airDate {
+                    Text(date.formatted(date: .long, time: episode.hasAired ? .omitted : .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            status
+            if let plexEpisode {
+                Button { play(plexEpisode) } label: {
+                    Label("Lire", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .help((plexEpisode.viewOffset ?? 0) > 0 ? "Reprendre dans Plex" : "Lire dans Plex")
+            } else if !episode.hasFile && episode.hasAired {
+                Button(action: search) {
+                    Label(searched ? "Recherche lancée" : "Rechercher", systemImage: searched ? "checkmark" : "magnifyingglass")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .disabled(searched)
+                .help(searched ? "Recherche lancée" : "Rechercher cet épisode")
+            }
+            Button(action: toggleMonitored) {
+                Image(systemName: episode.monitored ? "bookmark.fill" : "bookmark")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(episode.monitored ? Color.accentColor : .secondary)
+            .help(episode.monitored ? "Ne plus surveiller" : "Surveiller")
+            .accessibilityLabel(episode.monitored ? "Ne plus surveiller" : "Surveiller")
+        }
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder private var status: some View {
+        if episode.hasFile {
+            Label("Téléchargé", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                .labelStyle(.iconOnly).help("Téléchargé")
+        } else if !episode.hasAired {
+            Label("À venir", systemImage: "clock").foregroundStyle(.secondary)
+                .labelStyle(.iconOnly).help("Pas encore diffusé")
+        } else if episode.monitored {
+            Label("Manquant", systemImage: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                .labelStyle(.iconOnly).help("Manquant")
+        }
     }
 }
