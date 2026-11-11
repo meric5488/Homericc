@@ -9,6 +9,7 @@ struct PlexItem: Identifiable, Decodable, Hashable {
     let grandparentTitle: String?
     let parentTitle: String?
     let grandparentRatingKey: String?
+    let parentRatingKey: String?
     let year: Int?
     let summary: String?
     let thumb: String?
@@ -61,11 +62,49 @@ struct PlexItem: Identifiable, Decodable, Hashable {
     struct Tag: Decodable, Hashable { let tag: String }
 
     enum CodingKeys: String, CodingKey {
-        case ratingKey, sessionKey, key, type, title, grandparentTitle, parentTitle, grandparentRatingKey, year,
+        case ratingKey, sessionKey, key, type, title, grandparentTitle, parentTitle, grandparentRatingKey, parentRatingKey, year,
              summary, thumb, art, grandparentThumb, grandparentArt, parentThumb, index, parentIndex, viewOffset,
              viewCount, leafCount, viewedLeafCount, childCount, duration, addedAt, contentRating, studio,
              audienceRating, originallyAvailableAt
         case user = "User", player = "Player", media = "Media", genres = "Genre"
+    }
+
+    /// Lenient: a field Plex sends in an unexpected shape is dropped instead of failing the whole list.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ratingKey = c.lenient(String.self, .ratingKey)
+        sessionKey = c.lenient(String.self, .sessionKey)
+        key = c.lenient(String.self, .key)
+        type = c.lenient(String.self, .type)
+        title = c.lenient(String.self, .title)
+        grandparentTitle = c.lenient(String.self, .grandparentTitle)
+        parentTitle = c.lenient(String.self, .parentTitle)
+        grandparentRatingKey = c.lenient(String.self, .grandparentRatingKey)
+        parentRatingKey = c.lenient(String.self, .parentRatingKey)
+        year = c.lenient(Int.self, .year)
+        summary = c.lenient(String.self, .summary)
+        thumb = c.lenient(String.self, .thumb)
+        art = c.lenient(String.self, .art)
+        grandparentThumb = c.lenient(String.self, .grandparentThumb)
+        grandparentArt = c.lenient(String.self, .grandparentArt)
+        parentThumb = c.lenient(String.self, .parentThumb)
+        index = c.lenient(Int.self, .index)
+        parentIndex = c.lenient(Int.self, .parentIndex)
+        viewOffset = c.lenient(Int.self, .viewOffset)
+        viewCount = c.lenient(Int.self, .viewCount)
+        leafCount = c.lenient(Int.self, .leafCount)
+        viewedLeafCount = c.lenient(Int.self, .viewedLeafCount)
+        childCount = c.lenient(Int.self, .childCount)
+        duration = c.lenient(Int.self, .duration)
+        addedAt = c.lenient(Int.self, .addedAt)
+        contentRating = c.lenient(String.self, .contentRating)
+        studio = c.lenient(String.self, .studio)
+        audienceRating = c.lenient(Double.self, .audienceRating)
+        originallyAvailableAt = c.lenient(String.self, .originallyAvailableAt)
+        user = c.lenient(Account.self, .user)
+        player = c.lenient(PlayerInfo.self, .player)
+        media = c.lenient([Media].self, .media)
+        genres = c.lenient([Tag].self, .genres)
     }
 
     var id: String { sessionKey ?? ratingKey ?? title ?? "" }
@@ -171,6 +210,11 @@ struct PlexAPI {
         try await metadata("/library/metadata/\(ratingKey)/children")
     }
 
+    /// Every episode of a show, whatever its seasons look like.
+    func allEpisodes(of ratingKey: String) async throws -> [PlexItem] {
+        try await metadata("/library/metadata/\(ratingKey)/allLeaves")
+    }
+
     func search(_ query: String) async throws -> [PlexItem] {
         try await metadata("/search", query: [URLQueryItem(name: "query", value: query)])
     }
@@ -262,5 +306,11 @@ struct PlexAPI {
     private func page(size: Int) -> [URLQueryItem] {
         [URLQueryItem(name: "X-Plex-Container-Start", value: "0"),
          URLQueryItem(name: "X-Plex-Container-Size", value: String(size))]
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func lenient<T: Decodable>(_ type: T.Type, _ key: Key) -> T? {
+        (try? decodeIfPresent(type, forKey: key)) ?? nil
     }
 }

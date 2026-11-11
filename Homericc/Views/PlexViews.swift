@@ -262,6 +262,8 @@ struct PlexDetailView: View {
     @State private var seasons: [PlexItem] = []
     @State private var selectedSeason: String?
     @State private var episodes: [PlexItem] = []
+    @State private var episodesError: String?
+    @State private var episodesLoaded = false
     @Environment(\.openWindow) private var openWindow
 
     private var shown: PlexItem { full ?? item }
@@ -366,6 +368,13 @@ struct PlexDetailView: View {
                     .fixedSize()
                 }
             }
+            if let episodesError {
+                Label(episodesError, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            } else if episodesLoaded && episodes.isEmpty {
+                Text("Aucun épisode sur Plex pour cette saison.").foregroundStyle(.secondary)
+            } else if !episodesLoaded {
+                ProgressView().frame(maxWidth: .infinity)
+            }
             LazyVStack(spacing: 10) {
                 ForEach(episodes) { episode in
                     EpisodeRow(episode: episode, api: api) { play(episode) }
@@ -373,9 +382,25 @@ struct PlexDetailView: View {
             }
         }
         .task(id: selectedSeason) {
-            guard let selectedSeason else { return }
-            episodes = (try? await api.children(of: selectedSeason)) ?? []
+            guard let selectedSeason, let season = seasons.first(where: { $0.ratingKey == selectedSeason }) ?? (shown.type == "season" ? shown : nil) else { return }
+            await loadEpisodes(of: season)
         }
+    }
+
+    private func loadEpisodes(of season: PlexItem) async {
+        guard let seasonKey = season.ratingKey else { return }
+        episodesError = nil
+        do {
+            var list = try await api.children(of: seasonKey).filter { $0.type == "episode" }
+            // Some libraries file episodes oddly: fall back to the show's full episode list.
+            if list.isEmpty, let showKey = season.parentRatingKey ?? item.ratingKey {
+                list = try await api.allEpisodes(of: showKey).filter { $0.parentIndex == season.index }
+            }
+            episodes = list
+        } catch {
+            episodesError = error.localizedDescription
+        }
+        episodesLoaded = true
     }
 
     private func load() async {
@@ -383,9 +408,23 @@ struct PlexDetailView: View {
         full = try? await api.item(ratingKey)
         switch shown.type {
         case "show":
-            seasons = (try? await api.children(of: ratingKey)) ?? []
-            selectedSeason = (seasons.first { !$0.isWatched } ?? seasons.first)?.ratingKey
+            do {
+                let children = try await api.children(of: ratingKey)
+                seasons = children.filter { $0.type == "season" }
+                if seasons.isEmpty {
+                    // "Hide seasons for single-season shows": the show lists its episodes directly.
+                    let direct = children.filter { $0.type == "episode" }
+                    episodes = direct.isEmpty ? try await api.allEpisodes(of: ratingKey) : direct
+                    episodesLoaded = true
+                } else {
+                    selectedSeason = (seasons.first { !$0.isWatched } ?? seasons.first)?.ratingKey
+                }
+            } catch {
+                episodesError = error.localizedDescription
+                episodesLoaded = true
+            }
         case "season":
+            seasons = [shown]
             selectedSeason = ratingKey
         default:
             break
