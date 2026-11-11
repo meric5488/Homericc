@@ -150,9 +150,19 @@ struct PlexItem: Identifiable, Decodable, Hashable {
 struct PlexSection: Identifiable, Decodable, Hashable {
     let key: String
     let title: String
-    let type: String
+    /// Missing on some directory entries, e.g. the "All episodes" entry in a show's season list.
+    let type: String?
     var id: String { key }
     var isVideo: Bool { type == "movie" || type == "show" }
+
+    enum CodingKeys: String, CodingKey { case key, title, type }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = c.lenient(String.self, .key) ?? ""
+        title = c.lenient(String.self, .title) ?? ""
+        type = c.lenient(String.self, .type)
+    }
 }
 
 /// What the player window needs to start: enough to rebuild the stream on its own.
@@ -190,7 +200,7 @@ struct PlexAPI {
 
     func sections() async throws -> [PlexSection] {
         let envelope: Envelope = try await connection.get("/library/sections")
-        return envelope.MediaContainer.Directory ?? []
+        return (envelope.MediaContainer.Directory ?? []).filter { !$0.key.isEmpty }
     }
 
     func items(in section: PlexSection, sort: String = "titleSort") async throws -> [PlexItem] {
