@@ -191,6 +191,20 @@ extension ArrItem {
         year ?? (raw["releaseDate"] as? String).flatMap { Int($0.prefix(4)) }
     }
     var tmdbID: Int? { (raw["tmdbId"] as? Int).flatMap { $0 > 0 ? $0 : nil } }
+    var genres: [String] { raw["genres"] as? [String] ?? [] }
+    var runtime: Int? { (raw["runtime"] as? Int).flatMap { $0 > 0 ? $0 : nil } }
+
+    /// Year, runtime, certification: the line under the title.
+    var facts: [String] {
+        var facts: [String] = []
+        if let year = releaseYear { facts.append(String(year)) }
+        if let runtime { facts.append(Duration.seconds(runtime * 60).formatted(.units(allowed: [.hours, .minutes], width: .narrow))) }
+        if let certification = raw["certification"] as? String, !certification.isEmpty { facts.append(certification) }
+        if kind == .sonarr, let seasons = (raw["statistics"] as? [String: Any])?["seasonCount"] as? Int {
+            facts.append(seasons == 1 ? "1 saison" : "\(seasons) saisons")
+        }
+        return facts
+    }
 }
 
 extension ArrAPI {

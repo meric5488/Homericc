@@ -29,6 +29,8 @@ final class AppNavigation {
     var selection: SidebarItem? = .home
     /// The service shown when the Settings window opens.
     var settingsSelection: ServiceKind? = .radarr
+    /// Counts shown next to sidebar items.
+    var badges: [SidebarItem: Int] = [:]
 }
 
 enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
@@ -110,6 +112,7 @@ struct RootView: View {
                         ForEach(items) { item in
                             Label(item.title, systemImage: item.symbol)
                                 .foregroundStyle(item.service.map(store.isConfigured) ?? true ? .primary : .secondary)
+                                .badge(navigation.badges[item] ?? 0)
                         }
                     } header: {
                         if let title { Text(title) }
@@ -117,11 +120,32 @@ struct RootView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+            .task(id: store.revision) {
+                while !Task.isCancelled {
+                    await refreshBadges()
+                    try? await Task.sleep(for: .seconds(30))
+                }
+            }
         } detail: {
             NavigationStack {
                 detail(for: navigation.selection ?? .home)
             }
             .id(navigation.selection)
+        }
+    }
+
+    private func refreshBadges() async {
+        if let connection = store.connection(for: .seerr) {
+            let requests = (try? await SeerrAPI(connection: connection).requests()) ?? []
+            navigation.badges[.requests] = requests.filter { $0.isPending }.count
+        } else {
+            navigation.badges[.requests] = nil
+        }
+        if let connection = store.connection(for: .qbittorrent) {
+            let torrents = (try? await QBittorrentAPI(connection: connection).torrents()) ?? []
+            navigation.badges[.downloads] = torrents.filter { !$0.isComplete && !$0.isPaused }.count
+        } else {
+            navigation.badges[.downloads] = nil
         }
     }
 
