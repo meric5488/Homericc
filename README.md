@@ -9,10 +9,11 @@ Les services se configurent dans **Réglages** (⌘,).
 |---|---|
 | Recherche | Un seul champ pour films, séries, artistes et albums : ajout direct ou demande via Seerr |
 | Calendrier | Sorties à venir : épisodes (Sonarr), films (Radarr), albums (Lidarr), demandes Seerr |
+| Barre des menus | Résumé (vitesses, téléchargements, demandes, lectures), notifications, icône du Dock facultative |
 | Radarr, Sonarr, Lidarr | Bibliothèque (tri, filtres), ajout depuis la recherche, surveillance, recherche manuelle, suppression |
 | Seerr | Demandes en attente (approuver / refuser), recherche et nouvelles demandes |
 | Prowlarr | État des indexeurs, test, recherche de releases et envoi au client |
-| qBittorrent | Torrents en direct, vitesses, ratio (en vert au-delà de 20), tri, pause / reprise, suppression |
+| qBittorrent | Tableau triable (taille, ratio en vert au-delà de 20, date…), sélection multiple pour reprendre, mettre en pause ou supprimer |
 | Plex | Bibliothèques, « À suivre », fiches avec saisons et épisodes, **lecture intégrée** (reprise, progression renvoyée à Plex), lectures en cours |
 | Résumés | En français : TMDB via Seerr, ou traduction sur l'appareil |
 
@@ -25,11 +26,11 @@ changement de réseau. Les clés API, jetons et mots de passe sont rangés dans 
 Prérequis : Xcode 26 ou plus récent et [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```sh
-xcodegen generate
-xcodebuild -scheme Homericc -derivedDataPath build/DerivedData build
-open build/DerivedData/Build/Products/Debug/Homericc.app
+./build.sh              # compile
+INSTALL=1 ./build.sh    # compile, installe dans /Applications et relance
 ```
 
-L'app est signée ad hoc : macOS peut redemander l'accès au trousseau et au réseau local après chaque compilation.
+Sans certificat, l'app est signée ad hoc et macOS redemande l'accès au trousseau après chaque mise à jour.
+Pour l'éviter, crée une fois un certificat local : `./scripts/setup-signing.sh` (demande ton mot de passe).
 
 Le projet Xcode est généré depuis `project.yml` et n'est pas versionné.
