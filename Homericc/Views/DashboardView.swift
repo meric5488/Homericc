@@ -5,13 +5,15 @@ struct DashboardView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.openSettings) private var openSettings
 
-    @State private var statuses: [ServiceKind: Result<ServiceStatus, Error>] = [:]
-    @State private var sessions: [PlexItem] = []
-    @State private var recent: [PlexItem] = []
-    @State private var torrents: [Torrent] = []
-    @State private var transfer: TransferInfo?
-    @State private var pendingRequests = 0
-    @State private var warnings: [(ServiceKind, ArrHealth)] = []
+    @Environment(Monitor.self) private var monitor
+
+    private var statuses: [ServiceKind: Result<ServiceStatus, Error>] { monitor.statuses }
+    private var sessions: [PlexItem] { monitor.sessions }
+    private var recent: [PlexItem] { monitor.recentlyAdded }
+    private var torrents: [Torrent] { monitor.torrents }
+    private var transfer: TransferInfo? { monitor.transfer }
+    private var pendingRequests: Int { monitor.pendingRequests.count }
+    private var warnings: [(ServiceKind, ArrHealth)] { monitor.warnings }
 
     private var configured: [ServiceKind] { ServiceKind.allCases.filter(store.isConfigured) }
     private var plex: PlexAPI? { store.connection(for: .plex).map(PlexAPI.init) }
@@ -104,19 +106,15 @@ struct DashboardView: View {
         }
         .toolbar {
             ToolbarItem {
-                Button { Task { await load() } } label: {
+                Button { monitor.refreshNow() } label: {
                     Label("Actualiser", systemImage: "arrow.clockwise")
                 }
                 .keyboardShortcut("r")
             }
         }
-        .task(id: store.revision) {
-            // Keep the overview live while it's on screen.
-            while !Task.isCancelled {
-                await load()
-                try? await Task.sleep(for: .seconds(15))
-            }
-        }
+        // Live figures while on screen: the shared monitor speeds up instead of a second poller.
+        .onAppear { monitor.setFastRefresh(true) }
+        .onDisappear { monitor.setFastRefresh(false) }
     }
 
     private var tiles: some View {
@@ -148,46 +146,6 @@ struct DashboardView: View {
                  value: "\(online)/\(configured.count)",
                  caption: online == configured.count ? "Tous en ligne" : "Certains ne répondent pas") {}
         }
-    }
-
-    private func load() async {
-        // Each service loads on its own so a slow one doesn't hold up the others.
-        var tasks: [Task<Void, Never>] = []
-        for kind in configured {
-            guard let connection = store.connection(for: kind) else { continue }
-            tasks.append(Task {
-                do { statuses[kind] = .success(try await ServiceStatus.check(connection)) } catch { statuses[kind] = .failure(error) }
-            })
-        }
-        if let plex {
-            tasks.append(Task {
-                sessions = (try? await plex.sessions()) ?? []
-                recent = (try? await plex.recentlyAdded()) ?? []
-            })
-        }
-        if let connection = store.connection(for: .qbittorrent) {
-            tasks.append(Task {
-                let api = QBittorrentAPI(connection: connection)
-                torrents = (try? await api.torrents()) ?? []
-                transfer = try? await api.transfer()
-            })
-        }
-        if let connection = store.connection(for: .seerr) {
-            tasks.append(Task {
-                let requests = (try? await SeerrAPI(connection: connection).requests()) ?? []
-                pendingRequests = requests.filter { $0.isPending }.count
-            })
-        }
-        tasks.append(Task {
-            var found: [(ServiceKind, ArrHealth)] = []
-            for kind in [ServiceKind.radarr, .sonarr, .lidarr] {
-                guard let connection = store.connection(for: kind) else { continue }
-                let health = (try? await ArrAPI(connection: connection).health()) ?? []
-                found += health.filter { $0.type != "notice" }.map { (kind, $0) }
-            }
-            warnings = found
-        })
-        for task in tasks { await task.value }
     }
 }
 

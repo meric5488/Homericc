@@ -46,6 +46,7 @@ struct ArrLibraryView: View {
     let api: ArrAPI
 
     @State private var items: Loadable<[ArrItem]> = .idle
+    @State private var visibleItems: [ArrItem] = []
     @State private var query = ""
     @State private var showingAdd = false
     @AppStorage("library.sort") private var sort: LibrarySort = .title
@@ -54,6 +55,9 @@ struct ArrLibraryView: View {
     var body: some View {
         content
             .searchable(text: $query, prompt: "Filtrer")
+            .onChange(of: query) { refreshVisible() }
+            .onChange(of: sort) { refreshVisible() }
+            .onChange(of: filter) { refreshVisible() }
             .refreshable { await load() }
             .task { if items.value == nil { await load() } }
             .toolbar {
@@ -113,7 +117,8 @@ struct ArrLibraryView: View {
         }
     }
 
-    private var visibleItems: [ArrItem] {
+    /// Filtered and sorted once per change of the list or the options, not on every redraw.
+    private func refreshVisible() {
         var list = items.value ?? []
         if !query.isEmpty {
             list = list.filter { $0.title.localizedStandardContains(query) }
@@ -124,18 +129,22 @@ struct ArrLibraryView: View {
         case .monitored: list = list.filter(\.isMonitored)
         case .unmonitored: list = list.filter { !$0.isMonitored }
         }
+        // Compute each sort key once (dates are parsed from strings).
         switch sort {
-        case .title: list.sort { $0.sortTitle < $1.sortTitle }
-        case .added: list.sort { ($0.added ?? .distantPast) > ($1.added ?? .distantPast) }
-        case .size: list.sort { $0.sizeOnDisk > $1.sizeOnDisk }
+        case .title:
+            visibleItems = list.map { ($0, $0.sortTitle) }.sorted { $0.1 < $1.1 }.map(\.0)
+        case .added:
+            visibleItems = list.map { ($0, $0.added ?? .distantPast) }.sorted { $0.1 > $1.1 }.map(\.0)
+        case .size:
+            visibleItems = list.map { ($0, $0.sizeOnDisk) }.sorted { $0.1 > $1.1 }.map(\.0)
         }
-        return list
     }
 
     private func load() async {
         if items.value == nil { items = .loading }
         do {
             items = .loaded(try await api.library())
+            refreshVisible()
         } catch {
             items = .failed(error.localizedDescription)
         }

@@ -39,6 +39,7 @@ private struct TorrentTableView: View {
     @State private var selection = Set<Torrent.ID>()
     @State private var pendingDelete: [Torrent] = []
     @State private var runner = ActionRunner()
+    @State private var sync: TorrentSync?
 
     var body: some View {
         content
@@ -197,12 +198,13 @@ private struct TorrentTableView: View {
     }
 
     private func load() async {
+        // Incremental: after the first call qBittorrent only sends what changed.
+        let sync = self.sync ?? TorrentSync(api: api)
+        self.sync = sync
         do {
-            async let list = api.torrents()
-            async let info = api.transfer()
-            let loaded = try await list
+            let (loaded, info) = try await sync.update()
             torrents = .loaded(loaded)
-            transfer = try? await info
+            transfer = info
             // Drop selected rows that disappeared.
             selection.formIntersection(Set(loaded.map(\.id)))
         } catch {

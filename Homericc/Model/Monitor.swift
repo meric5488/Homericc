@@ -32,16 +32,22 @@ final class AppSettings {
     }
 }
 
-/// Polls the servers in the background, keeps a summary for the menu bar, and posts notifications
-/// when a download finishes, a request arrives or a service stops answering.
+/// The one place that polls the servers. The dashboard, the menu bar, the sidebar badges and
+/// notifications all read from it, so each server gets one set of requests per refresh.
 @Observable
 final class Monitor {
     private(set) var torrents: [Torrent] = []
     private(set) var transfer: TransferInfo?
     private(set) var pendingRequests: [SeerrRequest] = []
     private(set) var sessions: [PlexItem] = []
-    private(set) var offline: Set<ServiceKind> = []
+    private(set) var recentlyAdded: [PlexItem] = []
+    private(set) var warnings: [(ServiceKind, ArrHealth)] = []
+    private(set) var statuses: [ServiceKind: Result<ServiceStatus, Error>] = [:]
     private(set) var lastUpdate: Date?
+
+    var offline: Set<ServiceKind> {
+        Set(statuses.compactMap { kind, result in if case .failure = result { kind } else { nil } })
+    }
 
     private let store: ServiceStore
     private let settings: AppSettings
@@ -49,67 +55,151 @@ final class Monitor {
     private var seeded = false
     private var incompleteHashes: Set<String> = []
     private var knownRequests: Set<Int> = []
+    private var torrentSync: (ServiceConnection, TorrentSync)?
+    /// Versions only change on upgrades: fetched now and then, not on every poll.
+    private var versions: [ServiceKind: String] = [:]
+    private var versionsFetchedAt: Date?
+    private var fastRefreshViewers = 0
+    private var lastPoll: Date = .distantPast
+    private var revision = -1
 
     init(store: ServiceStore, settings: AppSettings) {
         self.store = store
         self.settings = settings
     }
 
+    private var interval: TimeInterval { fastRefreshViewers > 0 ? 15 : 30 }
+
     func start() {
         guard task == nil else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         task = Task {
             while !Task.isCancelled {
-                await poll()
-                try? await Task.sleep(for: .seconds(30))
+                if store.revision != revision {
+                    // Settings changed: forget per-service state.
+                    revision = store.revision
+                    statuses = [:]
+                    versionsFetchedAt = nil
+                    torrentSync = nil
+                    lastPoll = .distantPast
+                }
+                if Date.now.timeIntervalSince(lastPoll) >= interval {
+                    lastPoll = .now
+                    await poll()
+                }
+                try? await Task.sleep(for: .seconds(1))
             }
         }
     }
 
     func refreshNow() {
-        Task { await poll() }
+        lastPoll = .distantPast
+    }
+
+    /// Screens that show live figures (the dashboard) ask for a faster pace while visible.
+    func setFastRefresh(_ enabled: Bool) {
+        fastRefreshViewers = max(0, fastRefreshViewers + (enabled ? 1 : -1))
+        if enabled { refreshNow() }
     }
 
     private func poll() async {
+        let refreshVersions = versionsFetchedAt.map { Date.now.timeIntervalSince($0) > 600 } ?? true
+        if refreshVersions { versionsFetchedAt = .now }
+
+        // Every service at once; each part updates its own state.
+        var tasks: [Task<Void, Never>] = []
         if let connection = store.connection(for: .qbittorrent) {
-            let api = QBittorrentAPI(connection: connection)
-            if let list = try? await api.torrents() {
-                torrents = list
-                transfer = try? await api.transfer()
-                checkFinishedDownloads(list)
-                offline.remove(.qbittorrent)
-            } else {
-                markOffline(.qbittorrent)
-            }
+            tasks.append(Task { await pollTorrents(connection, version: refreshVersions) })
         }
-
         if let connection = store.connection(for: .seerr) {
-            let api = SeerrAPI(connection: connection)
-            if let requests = try? await api.requests() {
-                pendingRequests = requests.filter(\.isPending)
-                await checkNewRequests(pendingRequests, api: api)
-                offline.remove(.seerr)
-            } else {
-                markOffline(.seerr)
-            }
+            tasks.append(Task { await pollRequests(connection, version: refreshVersions) })
         }
-
         if let connection = store.connection(for: .plex) {
-            sessions = (try? await PlexAPI(connection: connection).sessions()) ?? []
+            tasks.append(Task { await pollPlex(connection, version: refreshVersions) })
         }
-
-        // The *arrs only need a reachability check.
-        for kind in [ServiceKind.radarr, .sonarr, .lidarr, .prowlarr, .plex] {
+        for kind in [ServiceKind.radarr, .sonarr, .lidarr, .prowlarr] {
             guard let connection = store.connection(for: kind) else { continue }
-            if (try? await ServiceStatus.check(connection)) != nil {
-                offline.remove(kind)
-            } else {
-                markOffline(kind)
-            }
+            tasks.append(Task { await pollArr(connection) })
         }
+        for task in tasks { await task.value }
 
+        let checked = Set(ServiceKind.allCases.filter(store.isConfigured))
+        warnings = warnings.filter { checked.contains($0.0) }
         seeded = true
         lastUpdate = .now
+    }
+
+    private func pollTorrents(_ connection: ServiceConnection, version: Bool) async {
+        if torrentSync?.0 !== connection {
+            torrentSync = (connection, TorrentSync(api: QBittorrentAPI(connection: connection)))
+        }
+        do {
+            let (list, info) = try await torrentSync!.1.update()
+            torrents = list
+            transfer = info
+            checkFinishedDownloads(list)
+            if version { versions[.qbittorrent] = try? await ServiceStatus.check(connection).version }
+            setOnline(.qbittorrent, connection)
+        } catch {
+            setOffline(.qbittorrent, error)
+        }
+    }
+
+    private func pollRequests(_ connection: ServiceConnection, version: Bool) async {
+        let api = SeerrAPI(connection: connection)
+        do {
+            pendingRequests = try await api.requests().filter(\.isPending)
+            await checkNewRequests(pendingRequests, api: api)
+            if version { versions[.seerr] = try? await ServiceStatus.check(connection).version }
+            setOnline(.seerr, connection)
+        } catch {
+            setOffline(.seerr, error)
+        }
+    }
+
+    private func pollPlex(_ connection: ServiceConnection, version: Bool) async {
+        let api = PlexAPI(connection: connection)
+        do {
+            sessions = try await api.sessions()
+            if version {
+                versions[.plex] = try? await ServiceStatus.check(connection).version
+                // Recently added changes slowly: refresh it at the same pace as versions.
+                recentlyAdded = (try? await api.recentlyAdded()) ?? recentlyAdded
+            } else if recentlyAdded.isEmpty {
+                recentlyAdded = (try? await api.recentlyAdded()) ?? []
+            }
+            setOnline(.plex, connection)
+        } catch {
+            setOffline(.plex, error)
+        }
+    }
+
+    /// One status call per *arr gives reachability and version; health warnings come along for the three libraries.
+    private func pollArr(_ connection: ServiceConnection) async {
+        let kind = connection.kind
+        do {
+            let status = try await ServiceStatus.check(connection)
+            versions[kind] = status.version
+            setOnline(kind, connection)
+            if kind != .prowlarr {
+                let health = (try? await ArrAPI(connection: connection).health()) ?? []
+                warnings = warnings.filter { $0.0 != kind } + health.filter { $0.type != "notice" }.map { (kind, $0) }
+            }
+        } catch {
+            setOffline(kind, error)
+        }
+    }
+
+    private func setOnline(_ kind: ServiceKind, _ connection: ServiceConnection) {
+        statuses[kind] = .success(ServiceStatus(version: versions[kind], isRemote: connection.isUsingRemote))
+    }
+
+    private func setOffline(_ kind: ServiceKind, _ error: Error) {
+        let wasOnline = !offline.contains(kind)
+        statuses[kind] = .failure(error)
+        guard seeded, wasOnline, settings.notifyOffline else { return }
+        notify(id: "offline-\(kind.rawValue)", title: "\(kind.name) ne répond plus",
+               body: "Ni l'adresse locale ni l'adresse distante ne répondent.")
     }
 
     private func checkFinishedDownloads(_ list: [Torrent]) {
@@ -131,14 +221,6 @@ final class Monitor {
             notify(id: "request-\(request.id)", title: "Nouvelle demande",
                    body: "\(title) · demandé par \(request.requestedBy?.displayName ?? "quelqu'un")")
         }
-    }
-
-    private func markOffline(_ kind: ServiceKind) {
-        let wasOnline = !offline.contains(kind)
-        offline.insert(kind)
-        guard seeded, wasOnline, settings.notifyOffline else { return }
-        notify(id: "offline-\(kind.rawValue)", title: "\(kind.name) ne répond plus",
-               body: "Ni l'adresse locale ni l'adresse distante ne répondent.")
     }
 
     private func notify(id: String, title: String, body: String) {

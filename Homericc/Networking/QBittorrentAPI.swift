@@ -86,3 +86,63 @@ struct QBittorrentAPI {
         }
     }
 }
+
+/// Keeps a torrent list current with qBittorrent's incremental sync: after the first call,
+/// each refresh only carries the torrents and fields that changed.
+final class TorrentSync {
+    private let api: QBittorrentAPI
+    private var rid = 0
+    private var raw: [String: [String: Any]] = [:]
+    private var decoded: [String: Torrent] = [:]
+    private var serverState: [String: Any] = [:]
+
+    init(api: QBittorrentAPI) {
+        self.api = api
+    }
+
+    func update() async throws -> (torrents: [Torrent], transfer: TransferInfo) {
+        let data: [String: Any]
+        do {
+            data = try await api.mainData(rid: rid)
+        } catch {
+            rid = 0 // Start over with a full update next time.
+            throw error
+        }
+        if data["full_update"] as? Bool == true {
+            raw = [:]
+            decoded = [:]
+        }
+        rid = data["rid"] as? Int ?? 0
+
+        for hash in data["torrents_removed"] as? [String] ?? [] {
+            raw[hash] = nil
+            decoded[hash] = nil
+        }
+        for (hash, changes) in data["torrents"] as? [String: [String: Any]] ?? [:] {
+            var merged = raw[hash] ?? ["hash": hash]
+            merged.merge(changes) { _, new in new }
+            raw[hash] = merged
+            // Only re-decode torrents that changed.
+            if let json = try? JSONSerialization.data(withJSONObject: merged),
+               let torrent = try? JSONDecoder().decode(Torrent.self, from: json) {
+                decoded[hash] = torrent
+            }
+        }
+        if let state = data["server_state"] as? [String: Any] {
+            serverState.merge(state) { _, new in new }
+        }
+        let transfer = TransferInfo(dl_info_speed: (serverState["dl_info_speed"] as? NSNumber)?.int64Value ?? 0,
+                                    up_info_speed: (serverState["up_info_speed"] as? NSNumber)?.int64Value ?? 0)
+        return (Array(decoded.values), transfer)
+    }
+}
+
+extension QBittorrentAPI {
+    func mainData(rid: Int) async throws -> [String: Any] {
+        let data = try await connection.data("/api/v2/sync/maindata", query: [URLQueryItem(name: "rid", value: String(rid))])
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ServiceError.invalidResponse(.qbittorrent)
+        }
+        return object
+    }
+}

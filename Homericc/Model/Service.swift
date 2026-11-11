@@ -80,13 +80,15 @@ struct ServiceConfig: Codable, Identifiable, Hashable {
     var id: ServiceKind { kind }
 
     var candidateURLs: [URL] {
-        [localURL, remoteURL]
+        let urls = [localURL, remoteURL]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .compactMap { raw in
                 let withScheme = raw.contains("://") ? raw : "http://\(raw)"
                 return URL(string: withScheme.hasSuffix("/") ? String(withScheme.dropLast()) : withScheme)
             }
+        // The same address in both fields would otherwise be tried, and waited for, twice.
+        return urls.first == urls.last ? Array(urls.prefix(1)) : urls
     }
 
     var isConfigured: Bool { isEnabled && !candidateURLs.isEmpty }

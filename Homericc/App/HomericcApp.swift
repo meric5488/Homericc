@@ -11,12 +11,16 @@ struct HomericcApp: App {
     @State private var pathMonitor = NetworkWatcher()
 
     init() {
+        // Posters and backdrops: keep them instead of downloading them again on every visit.
+        URLCache.shared = URLCache(memoryCapacity: 128 * 1024 * 1024, diskCapacity: 1024 * 1024 * 1024)
         let store = ServiceStore()
         let settings = AppSettings()
         _store = State(initialValue: store)
         _settings = State(initialValue: settings)
-        _monitor = State(initialValue: Monitor(store: store, settings: settings))
+        let monitor = Monitor(store: store, settings: settings)
+        _monitor = State(initialValue: monitor)
         AppDelegate.settings = settings
+        AppDelegate.monitor = monitor
     }
 
     var body: some Scene {
@@ -31,6 +35,8 @@ struct HomericcApp: App {
                 }
         }
         .defaultSize(width: 1100, height: 720)
+        // Without a Dock icon macOS wouldn't show the window at launch on its own.
+        .defaultLaunchBehavior(.presented)
 
         WindowGroup("Lecture", id: "player", for: PlexPlayback.self) { $playback in
             if let playback {
@@ -64,9 +70,12 @@ struct HomericcApp: App {
 /// Dock icon on or off, and staying alive in the menu bar when the window is closed.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var settings: AppSettings?
+    static var monitor: Monitor?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.applyDockPolicy()
+        // Notifications and the menu bar summary work even if the window is never opened.
+        Self.monitor?.start()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -93,8 +102,6 @@ final class AppNavigation {
     var settingsSelection: SettingsPage? = .general
     /// What plays inside the main window, over everything else.
     var playing: PlexPlayback?
-    /// Counts shown next to sidebar items.
-    var badges: [SidebarItem: Int] = [:]
 }
 
 enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
@@ -169,6 +176,7 @@ final class NetworkWatcher {
 struct RootView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServiceStore.self) private var store
+    @Environment(Monitor.self) private var monitor
 
     @Environment(\.openWindow) private var openWindow
 
@@ -197,7 +205,7 @@ struct RootView: View {
                         ForEach(items) { item in
                             Label(item.title, systemImage: item.symbol)
                                 .foregroundStyle(item.service.map(store.isConfigured) ?? true ? .primary : .secondary)
-                                .badge(navigation.badges[item] ?? 0)
+                                .badge(badge(for: item))
                         }
                     } header: {
                         if let title { Text(title) }
@@ -205,12 +213,6 @@ struct RootView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)
-            .task(id: store.revision) {
-                while !Task.isCancelled {
-                    await refreshBadges()
-                    try? await Task.sleep(for: .seconds(30))
-                }
-            }
         } detail: {
             NavigationStack {
                 detail(for: navigation.selection ?? .home)
@@ -219,18 +221,11 @@ struct RootView: View {
         }
     }
 
-    private func refreshBadges() async {
-        if let connection = store.connection(for: .seerr) {
-            let requests = (try? await SeerrAPI(connection: connection).requests()) ?? []
-            navigation.badges[.requests] = requests.filter { $0.isPending }.count
-        } else {
-            navigation.badges[.requests] = nil
-        }
-        if let connection = store.connection(for: .qbittorrent) {
-            let torrents = (try? await QBittorrentAPI(connection: connection).torrents()) ?? []
-            navigation.badges[.downloads] = torrents.filter { !$0.isComplete && !$0.isPaused }.count
-        } else {
-            navigation.badges[.downloads] = nil
+    private func badge(for item: SidebarItem) -> Int {
+        switch item {
+        case .requests: monitor.pendingRequests.count
+        case .downloads: monitor.torrents.filter { !$0.isComplete && !$0.isPaused }.count
+        default: 0
         }
     }
 

@@ -237,12 +237,19 @@ private struct CalendarContent: View {
         let requests = try await api.requests().filter { $0.status == 1 || $0.status == 2 }
         var result: [CalendarEvent] = []
         var seen: Set<String> = []
+        var unique: [SeerrRequest] = []
         for request in requests {
             let keys = mediaKeys(request.isMovie ? "movie" : "tv", tmdb: request.media?.tmdbId, tvdb: request.media?.tvdbId)
             // Several requests (per season, 4K…) can target the same title.
             guard keys.isEmpty || seen.isDisjoint(with: keys) else { continue }
             seen.formUnion(keys)
-            guard let details = try? await api.details(for: request) else { continue }
+            unique.append(request)
+        }
+        // Fetch every title's dates at once rather than one after the other.
+        let lookups = unique.map { request in Task { (request, try? await api.details(for: request)) } }
+        for lookup in lookups {
+            let (request, fetched) = await lookup.value
+            guard let details = fetched else { continue }
             let poster = SeerrAPI.posterURL(details.posterPath)
             let status = request.isPending ? "Demande en attente" : "Demande approuvée"
             if request.isMovie, let date = Self.date(details.releaseDate) {
