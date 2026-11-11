@@ -250,7 +250,7 @@ struct ArrItemDetailView: View {
     private var details: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let overview = item.overview {
-                Text(overview)
+                FrenchOverview(item: item, original: overview)
                     .font(.body)
                     .lineSpacing(3)
                     .textSelection(.enabled)

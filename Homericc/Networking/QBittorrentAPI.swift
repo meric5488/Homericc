@@ -10,6 +10,8 @@ struct Torrent: Identifiable, Decodable {
     let eta: Int
     let state: String
     let category: String?
+    let ratio: Double
+    let added_on: Int?
 
     var id: String { hash }
 

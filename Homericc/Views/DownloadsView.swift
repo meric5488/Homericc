@@ -16,6 +16,19 @@ struct DownloadsView: View {
     }
 }
 
+private enum TorrentSort: String, CaseIterable, Identifiable {
+    case added, ratio, size, name
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .added: "Date d'ajout"
+        case .ratio: "Ratio"
+        case .size: "Taille"
+        case .name: "Nom"
+        }
+    }
+}
+
 private enum TorrentFilter: String, CaseIterable, Identifiable {
     case active, all, done
     var id: Self { self }
@@ -34,6 +47,7 @@ private struct TorrentListView: View {
     @State private var torrents: Loadable<[Torrent]> = .idle
     @State private var transfer: TransferInfo?
     @State private var filter: TorrentFilter = .active
+    @AppStorage("downloads.sort") private var sort: TorrentSort = .added
     @State private var runner = ActionRunner()
     @State private var pendingDelete: Torrent?
 
@@ -46,6 +60,16 @@ private struct TorrentListView: View {
                     }
                     .pickerStyle(.segmented)
                     .fixedSize()
+                }
+                ToolbarItem {
+                    Menu {
+                        Picker("Trier par", selection: $sort) {
+                            ForEach(TorrentSort.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label("Trier", systemImage: "arrow.up.arrow.down")
+                    }
                 }
                 if let transfer {
                     ToolbarItem(placement: .status) {
@@ -116,10 +140,16 @@ private struct TorrentListView: View {
 
     private var visibleTorrents: [Torrent] {
         let list = torrents.value ?? []
-        return switch filter {
+        let filtered = switch filter {
         case .all: list
         case .active: list.filter { !$0.isComplete }
         case .done: list.filter(\.isComplete)
+        }
+        return switch sort {
+        case .added: filtered.sorted { ($0.added_on ?? 0) > ($1.added_on ?? 0) }
+        case .ratio: filtered.sorted { $0.ratio > $1.ratio }
+        case .size: filtered.sorted { $0.size > $1.size }
+        case .name: filtered.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
     }
 
@@ -166,11 +196,30 @@ private struct TorrentRow: View {
                 if let remaining = torrent.remaining {
                     Text(remaining.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 2)))
                 }
+                if torrent.upspeed > 0 {
+                    Text("↑ \(torrent.upspeed.speed)")
+                }
                 Text("\(torrent.progress.formatted(.percent.precision(.fractionLength(0)))) · \(torrent.size.bytes)")
+                RatioBadge(ratio: torrent.ratio)
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+    }
+}
+
+private struct RatioBadge: View {
+    let ratio: Double
+
+    var body: some View {
+        let high = ratio >= 20
+        Text("Ratio \(ratio.formatted(.number.precision(.fractionLength(2))))")
+            .fontWeight(high ? .semibold : .regular)
+            .foregroundStyle(high ? .green : (ratio < 1 ? .orange : .secondary))
+            .padding(.horizontal, high ? 6 : 0)
+            .padding(.vertical, high ? 1 : 0)
+            .background(high ? Color.green.opacity(0.15) : .clear, in: .capsule)
+            .help(high ? "Ratio supérieur à 20" : "Ratio de partage")
     }
 }

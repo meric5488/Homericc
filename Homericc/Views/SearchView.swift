@@ -192,10 +192,9 @@ private struct ResultRow<Actions: View>: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 if let overview = item.overview {
-                    Text(overview)
+                    FrenchOverview(item: item, original: overview, lineLimit: 2)
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
                 }
             }
             Spacer(minLength: 12)

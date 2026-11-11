@@ -72,7 +72,8 @@ private struct SearchResultRow: View {
                     Text(String(year)).font(.subheadline).foregroundStyle(.secondary)
                 }
                 if let overview = item.overview {
-                    Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    FrenchOverview(item: item, original: overview, lineLimit: 2)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

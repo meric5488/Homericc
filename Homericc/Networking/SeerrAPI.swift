@@ -72,6 +72,7 @@ struct SeerrMediaDetails: Decodable {
     let title: String?
     let name: String?
     let posterPath: String?
+    let overview: String?
     let releaseDate: String?
     let firstAirDate: String?
     let nextEpisodeToAir: Episode?
@@ -105,6 +106,11 @@ struct SeerrAPI {
     func details(for request: SeerrRequest) async throws -> SeerrMediaDetails? {
         guard let tmdbId = request.media?.tmdbId else { return nil }
         return try await connection.get("/api/v1/\(request.isMovie ? "movie" : "tv")/\(tmdbId)")
+    }
+
+    /// TMDB details in the given language (Seerr passes `language` through to TMDB).
+    func details(mediaType: String, tmdbID: Int, language: String) async throws -> SeerrMediaDetails {
+        try await connection.get("/api/v1/\(mediaType)/\(tmdbID)", query: [URLQueryItem(name: "language", value: language)])
     }
 
     func approve(_ request: SeerrRequest) async throws {
