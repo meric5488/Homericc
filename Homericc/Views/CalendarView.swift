@@ -11,6 +11,15 @@ struct CalendarEvent: Identifiable {
     let isDownloaded: Bool
     /// Date-only events (movies, albums) have no meaningful time.
     let hasTime: Bool
+    /// "movie-tmdb-…", "tv-tvdb-…": the same title across Radarr/Sonarr and Seerr, whatever its language.
+    var mediaKeys: Set<String> = []
+}
+
+private func mediaKeys(_ type: String, tmdb: Any?, tvdb: Any? = nil) -> Set<String> {
+    var keys: Set<String> = []
+    if let id = tmdb as? Int, id > 0 { keys.insert("\(type)-tmdb-\(id)") }
+    if let id = tvdb as? Int, id > 0 { keys.insert("\(type)-tvdb-\(id)") }
+    return keys
 }
 
 private enum CalendarSource: String, CaseIterable, Identifiable {
@@ -146,8 +155,11 @@ private struct CalendarContent: View {
             }
         }
         // Seerr requests already sent to Radarr/Sonarr show up there; keep only the extra ones.
-        let known = Set(collected.filter { $0.source != .seerr }.map { $0.title.lowercased() })
-        collected.removeAll { $0.source == .seerr && known.contains($0.title.lowercased()) }
+        let known = collected.filter { $0.source != .seerr }.reduce(into: Set<String>()) { $0.formUnion($1.mediaKeys) }
+        let knownTitles = Set(collected.filter { $0.source != .seerr }.map { $0.title.lowercased() })
+        collected.removeAll { event in
+            event.source == .seerr && (!event.mediaKeys.isDisjoint(with: known) || knownTitles.contains(event.title.lowercased()))
+        }
 
         failures = errors
         events = .loaded(collected.filter { $0.date >= start && $0.date < end })
@@ -183,21 +195,28 @@ private struct CalendarContent: View {
         let number = raw["episodeNumber"] as? Int ?? 0
         let code = String(format: "S%02dE%02d", season, number)
         let title = raw["title"] as? String
-        return CalendarEvent(
+        var event = CalendarEvent(
             id: "sonarr-\(raw["id"] ?? code)", date: date, source: .sonarr,
             title: series["title"] as? String ?? "Série",
             detail: [code, title].compactMap(\.self).joined(separator: " · "),
             posterURL: poster(series["images"]), isDownloaded: raw["hasFile"] as? Bool ?? false, hasTime: true)
+        event.mediaKeys = mediaKeys("tv", tmdb: series["tmdbId"], tvdb: series["tvdbId"])
+        return event
     }
 
+    /// One event per day: a digital and physical release on the same date are merged.
     private static func movieReleases(_ raw: [String: Any]) -> [CalendarEvent] {
-        let kinds = [("inCinemas", "Sortie en salle"), ("digitalRelease", "Sortie numérique"), ("physicalRelease", "Sortie en DVD/Blu-ray")]
-        return kinds.compactMap { key, label in
-            guard let date = date(raw[key]) else { return nil }
-            return CalendarEvent(
-                id: "radarr-\(raw["id"] ?? "")-\(key)", date: date, source: .radarr,
-                title: raw["title"] as? String ?? "Film", detail: label,
+        let kinds = [("inCinemas", "Sortie en salle"), ("digitalRelease", "Sortie numérique"), ("physicalRelease", "Sortie DVD/Blu-ray")]
+        let dated = kinds.compactMap { key, label in date(raw[key]).map { (Calendar.current.startOfDay(for: $0), label) } }
+        let byDay = Dictionary(grouping: dated, by: \.0)
+        return byDay.keys.sorted().map { day in
+            var event = CalendarEvent(
+                id: "radarr-\(raw["id"] ?? "")-\(day.timeIntervalSince1970)", date: day, source: .radarr,
+                title: raw["title"] as? String ?? "Film",
+                detail: byDay[day]!.map(\.1).formatted(.list(type: .and)),
                 posterURL: poster(raw["images"]), isDownloaded: raw["hasFile"] as? Bool ?? false, hasTime: false)
+            event.mediaKeys = mediaKeys("movie", tmdb: raw["tmdbId"])
+            return event
         }
     }
 
@@ -217,7 +236,12 @@ private struct CalendarContent: View {
     private func seerrEvents(_ api: SeerrAPI) async throws -> [CalendarEvent] {
         let requests = try await api.requests().filter { $0.status == 1 || $0.status == 2 }
         var result: [CalendarEvent] = []
+        var seen: Set<String> = []
         for request in requests {
+            let keys = mediaKeys(request.isMovie ? "movie" : "tv", tmdb: request.media?.tmdbId, tvdb: request.media?.tvdbId)
+            // Several requests (per season, 4K…) can target the same title.
+            guard keys.isEmpty || seen.isDisjoint(with: keys) else { continue }
+            seen.formUnion(keys)
             guard let details = try? await api.details(for: request) else { continue }
             let poster = SeerrAPI.posterURL(details.posterPath)
             let status = request.isPending ? "Demande en attente" : "Demande approuvée"
@@ -236,7 +260,13 @@ private struct CalendarContent: View {
                                             posterURL: poster, isDownloaded: false, hasTime: false))
             }
         }
-        return result
+        return result.map { event in
+            var event = event
+            let request = requests.first { "seerr-\($0.id)" == event.id }
+            event.mediaKeys = mediaKeys(request?.isMovie == true ? "movie" : "tv",
+                                        tmdb: request?.media?.tmdbId, tvdb: request?.media?.tvdbId)
+            return event
+        }
     }
 }
 

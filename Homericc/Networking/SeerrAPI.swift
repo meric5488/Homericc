@@ -10,6 +10,7 @@ struct SeerrRequest: Identifiable, Decodable {
 
     struct Media: Decodable {
         let tmdbId: Int?
+        let tvdbId: Int?
         let mediaType: String?
         let status: Int?
     }
