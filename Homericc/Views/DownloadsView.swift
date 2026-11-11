@@ -5,27 +5,14 @@ struct DownloadsView: View {
 
     var body: some View {
         Group {
-                if let connection = store.connection(for: .qbittorrent) {
-                    TorrentListView(api: QBittorrentAPI(connection: connection))
-                        .id(store.revision)
-                } else {
-                    NotConfiguredView(kinds: [.qbittorrent])
-                }
+            if let connection = store.connection(for: .qbittorrent) {
+                TorrentTableView(api: QBittorrentAPI(connection: connection))
+                    .id(store.revision)
+            } else {
+                NotConfiguredView(kinds: [.qbittorrent])
             }
-        .navigationTitle("Téléchargements")
-    }
-}
-
-private enum TorrentSort: String, CaseIterable, Identifiable {
-    case added, ratio, size, name
-    var id: Self { self }
-    var label: String {
-        switch self {
-        case .added: "Date d'ajout"
-        case .ratio: "Ratio"
-        case .size: "Taille"
-        case .name: "Nom"
         }
+        .navigationTitle("Téléchargements")
     }
 }
 
@@ -41,46 +28,21 @@ private enum TorrentFilter: String, CaseIterable, Identifiable {
     }
 }
 
-private struct TorrentListView: View {
+/// qBittorrent as a Mac table: click a column header to sort, select several rows to act on them at once.
+private struct TorrentTableView: View {
     let api: QBittorrentAPI
 
     @State private var torrents: Loadable<[Torrent]> = .idle
     @State private var transfer: TransferInfo?
-    @State private var filter: TorrentFilter = .active
-    @AppStorage("downloads.sort") private var sort: TorrentSort = .added
+    @AppStorage("downloads.filter") private var filter: TorrentFilter = .all
+    @State private var sortOrder = [KeyPathComparator(\Torrent.addedOn, order: .reverse)]
+    @State private var selection = Set<Torrent.ID>()
+    @State private var pendingDelete: [Torrent] = []
     @State private var runner = ActionRunner()
-    @State private var pendingDelete: Torrent?
 
     var body: some View {
         content
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Afficher", selection: $filter) {
-                        ForEach(TorrentFilter.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                }
-                ToolbarItem {
-                    Menu {
-                        Picker("Trier par", selection: $sort) {
-                            ForEach(TorrentSort.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.inline)
-                    } label: {
-                        Label("Trier", systemImage: "arrow.up.arrow.down")
-                    }
-                }
-                if let transfer {
-                    ToolbarItem(placement: .status) {
-                        Text("↓ \(transfer.dl_info_speed.speed)  ↑ \(transfer.up_info_speed.speed)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .fixedSize()
-                    }
-                }
-            }
-            .refreshable { await load() }
+            .toolbar { toolbar }
             .task {
                 // Live view: refresh every few seconds while on screen.
                 while !Task.isCancelled {
@@ -89,13 +51,14 @@ private struct TorrentListView: View {
                 }
             }
             .errorAlert(runner)
-            .confirmationDialog("Supprimer « \(pendingDelete?.name ?? "") » ?",
-                                isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            .confirmationDialog(deleteTitle, isPresented: Binding(get: { !pendingDelete.isEmpty },
+                                                                  set: { if !$0 { pendingDelete = [] } }),
                                 titleVisibility: .visible) {
-                if let torrent = pendingDelete {
-                    Button("Supprimer le torrent", role: .destructive) { delete(torrent, files: false) }
-                    Button("Supprimer avec les fichiers", role: .destructive) { delete(torrent, files: true) }
-                }
+                let targets = pendingDelete
+                Button("Supprimer les torrents", role: .destructive) { delete(targets, files: false) }
+                Button("Supprimer avec les fichiers", role: .destructive) { delete(targets, files: true) }
+            } message: {
+                Text("Supprimer les fichiers libère de la place sur le serveur mais ne peut pas être annulé.")
             }
     }
 
@@ -106,36 +69,117 @@ private struct TorrentListView: View {
         case .failed(let message):
             ErrorView(message: message) { await load() }
         case .loaded:
-            let visible = visibleTorrents
-            if visible.isEmpty {
-                ContentUnavailableView(filter == .active ? "Aucun téléchargement en cours" : "Aucun torrent",
-                                       systemImage: "arrow.down.circle")
-            } else {
-                List(visible) { torrent in
-                    TorrentRow(torrent: torrent)
-                        .swipeActions(edge: .trailing) {
-                            Button("Supprimer", systemImage: "trash", role: .destructive) { pendingDelete = torrent }
-                        }
-                        .swipeActions(edge: .leading) {
-                            if torrent.isPaused {
-                                Button("Reprendre", systemImage: "play.fill") { act { try await api.resume(torrent) } }
-                                    .tint(.green)
-                            } else {
-                                Button("Pause", systemImage: "pause.fill") { act { try await api.pause(torrent) } }
-                                    .tint(.orange)
-                            }
-                        }
-                        .contextMenu {
-                            if torrent.isPaused {
-                                Button("Reprendre", systemImage: "play.fill") { act { try await api.resume(torrent) } }
-                            } else {
-                                Button("Pause", systemImage: "pause.fill") { act { try await api.pause(torrent) } }
-                            }
-                            Button("Supprimer…", systemImage: "trash", role: .destructive) { pendingDelete = torrent }
-                        }
+            table
+                .overlay {
+                    if visibleTorrents.isEmpty {
+                        ContentUnavailableView(filter == .active ? "Aucun téléchargement en cours" : "Aucun torrent",
+                                               systemImage: "arrow.down.circle")
+                    }
+                }
+        }
+    }
+
+    private var table: some View {
+        Table(visibleTorrents, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Nom", value: \.name) { torrent in
+                Text(torrent.name)
+                    .lineLimit(1)
+                    .help(torrent.name)
+            }
+            .width(min: 220, ideal: 380)
+
+            TableColumn("Taille", value: \.size) { Text($0.size.bytes).monospacedDigit() }
+                .width(min: 70, ideal: 80)
+
+            TableColumn("Progression", value: \.progress) { torrent in
+                HStack(spacing: 6) {
+                    ProgressView(value: torrent.progress)
+                        .tint(torrent.hasError ? .red : (torrent.isPaused ? .secondary : .accentColor))
+                    Text(torrent.progress.formatted(.percent.precision(.fractionLength(0))))
+                        .monospacedDigit()
+                        .frame(width: 38, alignment: .trailing)
                 }
             }
+            .width(min: 110, ideal: 140)
+
+            TableColumn("État", value: \.stateLabel) { torrent in
+                Text(torrent.stateLabel).foregroundStyle(torrent.hasError ? .red : .secondary)
+            }
+            .width(min: 80, ideal: 100)
+
+            TableColumn("↓", value: \.dlspeed) { torrent in
+                Text(torrent.dlspeed > 0 ? torrent.dlspeed.speed : "").monospacedDigit()
+            }
+            .width(min: 60, ideal: 80)
+
+            TableColumn("↑", value: \.upspeed) { torrent in
+                Text(torrent.upspeed > 0 ? torrent.upspeed.speed : "").monospacedDigit()
+            }
+            .width(min: 60, ideal: 80)
+
+            TableColumn("Ratio", value: \.ratio) { RatioBadge(ratio: $0.ratio) }
+                .width(min: 60, ideal: 70)
+
+            TableColumn("Ajouté", value: \.addedOn) { torrent in
+                Text(torrent.addedDate?.formatted(date: .abbreviated, time: .shortened) ?? "")
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 110, ideal: 140)
         }
+        .contextMenu(forSelectionType: Torrent.ID.self) { ids in
+            let targets = torrents(for: ids)
+            if !targets.isEmpty {
+                Button("Reprendre", systemImage: "play.fill") { act { try await api.resume(targets) } }
+                Button("Mettre en pause", systemImage: "pause.fill") { act { try await api.pause(targets) } }
+                Divider()
+                Button(targets.count == 1 ? "Supprimer…" : "Supprimer \(targets.count) torrents…",
+                       systemImage: "trash", role: .destructive) { pendingDelete = targets }
+            }
+        }
+        .onDeleteCommand { pendingDelete = torrents(for: selection) }
+    }
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            Picker("Afficher", selection: $filter) {
+                ForEach(TorrentFilter.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+        }
+        ToolbarItemGroup {
+            let targets = torrents(for: selection)
+            Button { act { try await api.resume(targets) } } label: {
+                Label("Reprendre", systemImage: "play.fill")
+            }
+            .help("Reprendre la sélection")
+            .disabled(targets.isEmpty)
+            Button { act { try await api.pause(targets) } } label: {
+                Label("Pause", systemImage: "pause.fill")
+            }
+            .help("Mettre la sélection en pause")
+            .disabled(targets.isEmpty)
+        }
+        ToolbarSpacer(.fixed)
+        ToolbarItem {
+            Button(role: .destructive) { pendingDelete = torrents(for: selection) } label: {
+                Label("Supprimer", systemImage: "trash")
+            }
+            .help("Supprimer la sélection (⌫)")
+            .disabled(selection.isEmpty)
+        }
+        if let transfer {
+            ToolbarItem(placement: .status) {
+                Text("↓ \(transfer.dl_info_speed.speed)  ↑ \(transfer.up_info_speed.speed)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+        }
+    }
+
+    private var deleteTitle: String {
+        pendingDelete.count == 1 ? "Supprimer « \(pendingDelete[0].name) » ?" : "Supprimer \(pendingDelete.count) torrents ?"
     }
 
     private var visibleTorrents: [Torrent] {
@@ -145,20 +189,22 @@ private struct TorrentListView: View {
         case .active: list.filter { !$0.isComplete }
         case .done: list.filter(\.isComplete)
         }
-        return switch sort {
-        case .added: filtered.sorted { ($0.added_on ?? 0) > ($1.added_on ?? 0) }
-        case .ratio: filtered.sorted { $0.ratio > $1.ratio }
-        case .size: filtered.sorted { $0.size > $1.size }
-        case .name: filtered.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        }
+        return filtered.sorted(using: sortOrder)
+    }
+
+    private func torrents(for ids: Set<Torrent.ID>) -> [Torrent] {
+        (torrents.value ?? []).filter { ids.contains($0.id) }
     }
 
     private func load() async {
         do {
             async let list = api.torrents()
             async let info = api.transfer()
-            torrents = .loaded(try await list)
+            let loaded = try await list
+            torrents = .loaded(loaded)
             transfer = try? await info
+            // Drop selected rows that disappeared.
+            selection.formIntersection(Set(loaded.map(\.id)))
         } catch {
             if torrents.value == nil { torrents = .failed(error.localizedDescription) }
         }
@@ -171,41 +217,9 @@ private struct TorrentListView: View {
         }
     }
 
-    private func delete(_ torrent: Torrent, files: Bool) {
-        act { try await api.delete(torrent, deleteFiles: files) }
-    }
-}
-
-private struct TorrentRow: View {
-    let torrent: Torrent
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(torrent.name)
-                .font(.subheadline)
-                .lineLimit(2)
-            ProgressView(value: torrent.progress)
-                .tint(torrent.hasError ? .red : (torrent.isPaused ? .secondary : .accentColor))
-            HStack {
-                Text(torrent.stateLabel)
-                    .foregroundStyle(torrent.hasError ? .red : .secondary)
-                Spacer()
-                if torrent.dlspeed > 0 {
-                    Text("↓ \(torrent.dlspeed.speed)")
-                }
-                if let remaining = torrent.remaining {
-                    Text(remaining.formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 2)))
-                }
-                if torrent.upspeed > 0 {
-                    Text("↑ \(torrent.upspeed.speed)")
-                }
-                Text("\(torrent.progress.formatted(.percent.precision(.fractionLength(0)))) · \(torrent.size.bytes)")
-                RatioBadge(ratio: torrent.ratio)
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
+    private func delete(_ targets: [Torrent], files: Bool) {
+        act { try await api.delete(targets, deleteFiles: files) }
+        selection.subtract(targets.map(\.id))
     }
 }
 
@@ -214,11 +228,11 @@ private struct RatioBadge: View {
 
     var body: some View {
         let high = ratio >= 20
-        Text("Ratio \(ratio.formatted(.number.precision(.fractionLength(2))))")
+        Text(ratio.formatted(.number.precision(.fractionLength(2))))
+            .monospacedDigit()
             .fontWeight(high ? .semibold : .regular)
-            .foregroundStyle(high ? .green : (ratio < 1 ? .orange : .secondary))
+            .foregroundStyle(high ? .green : (ratio < 1 ? .orange : .primary))
             .padding(.horizontal, high ? 6 : 0)
-            .padding(.vertical, high ? 1 : 0)
             .background(high ? Color.green.opacity(0.15) : .clear, in: .capsule)
             .help(high ? "Ratio supérieur à 20" : "Ratio de partage")
     }

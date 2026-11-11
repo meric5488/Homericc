@@ -100,12 +100,39 @@ final class ServiceStore {
     private(set) var revision = 0
 
     private let defaultsKey = "services.v1"
+    /// All secrets live in one keychain item, so macOS asks for access once rather than once per service.
+    private let secretsAccount = "secrets.v1"
+    private var secrets: [String: String] = [:]
 
     init() {
         if let data = UserDefaults.standard.data(forKey: defaultsKey),
            let list = try? JSONDecoder().decode([ServiceConfig].self, from: data) {
             configs = Dictionary(uniqueKeysWithValues: list.map { ($0.kind, $0) })
         }
+        loadSecrets()
+    }
+
+    private func loadSecrets() {
+        if let json = Keychain.read(account: secretsAccount),
+           let stored = try? JSONDecoder().decode([String: String].self, from: Data(json.utf8)) {
+            secrets = stored
+            return
+        }
+        // First launch after the change: move the old one-item-per-service secrets into the shared item.
+        for kind in ServiceKind.allCases {
+            if let old = Keychain.read(account: kind.rawValue) {
+                secrets[kind.rawValue] = old
+            }
+        }
+        if !secrets.isEmpty {
+            persistSecrets()
+            ServiceKind.allCases.forEach { Keychain.delete(account: $0.rawValue) }
+        }
+    }
+
+    private func persistSecrets() {
+        guard let data = try? JSONEncoder().encode(secrets) else { return }
+        Keychain.write(String(decoding: data, as: UTF8.self), account: secretsAccount)
     }
 
     func config(for kind: ServiceKind) -> ServiceConfig {
@@ -117,18 +144,20 @@ final class ServiceStore {
     }
 
     func secret(for kind: ServiceKind) -> String {
-        Keychain.read(account: kind.rawValue) ?? ""
+        secrets[kind.rawValue] ?? ""
     }
 
     func save(_ config: ServiceConfig, secret: String) {
         configs[config.kind] = config
-        Keychain.write(secret, account: config.kind.rawValue)
+        secrets[config.kind.rawValue] = secret.isEmpty ? nil : secret
+        persistSecrets()
         persist()
     }
 
     func remove(_ kind: ServiceKind) {
         configs[kind] = nil
-        Keychain.delete(account: kind.rawValue)
+        secrets[kind.rawValue] = nil
+        persistSecrets()
         persist()
     }
 

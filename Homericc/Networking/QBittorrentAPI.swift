@@ -1,6 +1,6 @@
 import Foundation
 
-struct Torrent: Identifiable, Decodable {
+nonisolated struct Torrent: Identifiable, Decodable, Sendable {
     let hash: String
     let name: String
     let progress: Double
@@ -14,6 +14,8 @@ struct Torrent: Identifiable, Decodable {
     let added_on: Int?
 
     var id: String { hash }
+    var addedOn: Int { added_on ?? 0 }
+    var addedDate: Date? { added_on.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
 
     var isPaused: Bool { state.hasPrefix("paused") || state.hasPrefix("stopped") }
     var isComplete: Bool { progress >= 1 }
@@ -57,25 +59,30 @@ struct QBittorrentAPI {
         try await connection.get("/api/v2/transfer/info")
     }
 
-    func pause(_ torrent: Torrent) async throws {
-        try await command(v5: "stop", v4: "pause", hash: torrent.hash)
+    func pause(_ torrents: [Torrent]) async throws {
+        try await command(v5: "stop", v4: "pause", hashes: torrents)
     }
 
-    func resume(_ torrent: Torrent) async throws {
-        try await command(v5: "start", v4: "resume", hash: torrent.hash)
+    func resume(_ torrents: [Torrent]) async throws {
+        try await command(v5: "start", v4: "resume", hashes: torrents)
     }
 
-    func delete(_ torrent: Torrent, deleteFiles: Bool) async throws {
+    func delete(_ torrents: [Torrent], deleteFiles: Bool) async throws {
         try await connection.perform("POST", "/api/v2/torrents/delete",
-                                     form: ["hashes": torrent.hash, "deleteFiles": deleteFiles ? "true" : "false"])
+                                     form: ["hashes": Self.join(torrents), "deleteFiles": deleteFiles ? "true" : "false"])
+    }
+
+    private static func join(_ torrents: [Torrent]) -> String {
+        torrents.map(\.hash).joined(separator: "|")
     }
 
     /// qBittorrent 5 renamed pause/resume to stop/start.
-    private func command(v5: String, v4: String, hash: String) async throws {
+    private func command(v5: String, v4: String, hashes torrents: [Torrent]) async throws {
+        let hashes = Self.join(torrents)
         do {
-            try await connection.perform("POST", "/api/v2/torrents/\(v5)", form: ["hashes": hash])
+            try await connection.perform("POST", "/api/v2/torrents/\(v5)", form: ["hashes": hashes])
         } catch ServiceError.http(_, 404) {
-            try await connection.perform("POST", "/api/v2/torrents/\(v4)", form: ["hashes": hash])
+            try await connection.perform("POST", "/api/v2/torrents/\(v4)", form: ["hashes": hashes])
         }
     }
 }
