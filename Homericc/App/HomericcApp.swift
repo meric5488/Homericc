@@ -16,6 +16,15 @@ struct HomericcApp: App {
         }
         .defaultSize(width: 1100, height: 720)
 
+        WindowGroup("Lecture", id: "player", for: PlexPlayback.self) { $playback in
+            if let playback {
+                PlayerView(playback: playback)
+                    .environment(store)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 720)
+
         Settings {
             SettingsView()
                 .environment(store)
@@ -34,7 +43,7 @@ final class AppNavigation {
 }
 
 enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
-    case home, search, calendar, movies, series, music, requests, downloads, indexers
+    case home, search, calendar, plex, movies, series, music, requests, downloads, indexers
 
     var id: Self { self }
 
@@ -43,6 +52,7 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         case .home: "Accueil"
         case .search: "Rechercher"
         case .calendar: "Calendrier"
+        case .plex: "Plex"
         case .movies: "Films"
         case .series: "Séries"
         case .music: "Musique"
@@ -56,6 +66,7 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
     var service: ServiceKind? {
         switch self {
         case .home, .search, .calendar: nil
+        case .plex: .plex
         case .movies: .radarr
         case .series: .sonarr
         case .music: .lidarr
@@ -76,6 +87,7 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
 
     static let sections: [(String?, [SidebarItem])] = [
         (nil, [.home, .search, .calendar]),
+        ("Regarder", [.plex]),
         ("Bibliothèque", [.movies, .series, .music]),
         ("Serveur", [.requests, .downloads, .indexers]),
     ]
@@ -154,6 +166,7 @@ struct RootView: View {
         case .home: DashboardView()
         case .search: SearchView()
         case .calendar: CalendarView()
+        case .plex: PlexHomeView()
         case .movies: LibraryView(kind: .radarr)
         case .series: LibraryView(kind: .sonarr)
         case .music: LibraryView(kind: .lidarr)

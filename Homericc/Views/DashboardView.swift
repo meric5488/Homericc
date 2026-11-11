@@ -139,7 +139,9 @@ struct DashboardView: View {
             if !sessions.isEmpty || store.isConfigured(.plex) {
                 Tile(title: "Plex", symbol: "play.rectangle.fill", tint: .orange,
                      value: "\(sessions.count)",
-                     caption: sessions.count == 1 ? "Lecture en cours" : "Lectures en cours") {}
+                     caption: sessions.count == 1 ? "Lecture en cours" : "Lectures en cours") {
+                    navigation.selection = .plex
+                }
             }
             let online = statuses.values.filter { if case .success = $0 { true } else { false } }.count
             Tile(title: "Services", symbol: "server.rack", tint: online == configured.count ? .green : .red,

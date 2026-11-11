@@ -152,7 +152,7 @@ final class ServiceConnection {
         case .token:
             request.setValue(secret, forHTTPHeaderField: "X-Plex-Token")
             request.setValue("Homericc", forHTTPHeaderField: "X-Plex-Product")
-            request.setValue("homericc-ios", forHTTPHeaderField: "X-Plex-Client-Identifier")
+            request.setValue("homericc-mac", forHTTPHeaderField: "X-Plex-Client-Identifier")
         case .login:
             // qBittorrent rejects requests whose Referer doesn't match its host (CSRF protection).
             request.setValue(base.absoluteString, forHTTPHeaderField: "Referer")

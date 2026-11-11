@@ -12,8 +12,9 @@ Les services se configurent dans **Réglages** (⌘,).
 | Radarr, Sonarr, Lidarr | Bibliothèque (tri, filtres), ajout depuis la recherche, surveillance, recherche manuelle, suppression |
 | Seerr | Demandes en attente (approuver / refuser), recherche et nouvelles demandes |
 | Prowlarr | État des indexeurs, test, recherche de releases et envoi au client |
-| qBittorrent | Torrents en direct, vitesses, pause / reprise, suppression |
-| Plex | Lectures en cours, ajouts récents |
+| qBittorrent | Torrents en direct, vitesses, ratio (en vert au-delà de 20), tri, pause / reprise, suppression |
+| Plex | Bibliothèques, « À suivre », fiches avec saisons et épisodes, **lecture intégrée** (reprise, progression renvoyée à Plex), lectures en cours |
+| Résumés | En français : TMDB via Seerr, ou traduction sur l'appareil |
 
 Chaque service a une **adresse locale** (essayée en premier, délai court) et une **adresse distante**
 (domaine, reverse proxy, Tailscale) utilisée quand la première ne répond pas. Le choix est oublié à chaque
