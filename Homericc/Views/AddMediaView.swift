@@ -31,10 +31,9 @@ struct AddMediaView: View {
                     }
                 }
             }
+            .frame(minWidth: 560, minHeight: 460)
             .navigationTitle("Ajouter")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: api.kind == .lidarr ? "Artiste" : "Titre")
+            .searchable(text: $query, placement: .toolbar, prompt: api.kind == .lidarr ? "Artiste" : "Titre")
             .onSubmit(of: .search) { Task { await search() } }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -43,7 +42,7 @@ struct AddMediaView: View {
             }
             .sheet(item: $selection) { item in
                 AddOptionsView(api: api, item: item) { dismiss() }
-                    .presentationDetents([.medium, .large])
+                    .frame(minWidth: 420, minHeight: 260)
             }
         }
     }
@@ -100,6 +99,7 @@ private struct AddOptionsView: View {
     @State private var searchNow = true
     @State private var loadError: String?
     @State private var runner = ActionRunner()
+    @Environment(\.dismiss) private var dismissOptions
 
     init(api: ArrAPI, item: ArrItem, onAdded: @escaping () -> Void) {
         self.api = api
@@ -132,9 +132,12 @@ private struct AddOptionsView: View {
                 }
                 Toggle("Lancer la recherche", isOn: $searchNow)
             }
+            .formStyle(.grouped)
             .navigationTitle(item.title)
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Annuler", role: .cancel) { dismissOptions() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Ajouter") {
                         runner.run {

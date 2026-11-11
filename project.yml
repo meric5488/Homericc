@@ -2,7 +2,7 @@ name: Homericc
 options:
   bundleIdPrefix: com.meric5488
   deploymentTarget:
-    iOS: "26.0"
+    macOS: "26.0"
   developmentLanguage: fr
 settings:
   base:
@@ -14,18 +14,19 @@ settings:
 targets:
   Homericc:
     type: application
-    platform: iOS
+    platform: macOS
     sources:
       - Homericc
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.meric5488.Homericc
-        TARGETED_DEVICE_FAMILY: "1,2"
+        PRODUCT_NAME: Homericc
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: Homericc/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Homericc
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.entertainment
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Homericc se connecte à tes serveurs (Radarr, Sonarr, Plex…) sur ton réseau local."

@@ -4,8 +4,7 @@ struct DownloadsView: View {
     @Environment(ServiceStore.self) private var store
 
     var body: some View {
-        NavigationStack {
-            Group {
+        Group {
                 if let connection = store.connection(for: .qbittorrent) {
                     TorrentListView(api: QBittorrentAPI(connection: connection))
                         .id(store.revision)
@@ -13,8 +12,7 @@ struct DownloadsView: View {
                     NotConfiguredView(kinds: [.qbittorrent])
                 }
             }
-            .navigationTitle("Téléchargements")
-        }
+        .navigationTitle("Téléchargements")
     }
 }
 
@@ -41,17 +39,16 @@ private struct TorrentListView: View {
 
     var body: some View {
         content
-            .safeAreaInset(edge: .top) {
-                Picker("Afficher", selection: $filter) {
-                    ForEach(TorrentFilter.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-            }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Picker("Afficher", selection: $filter) {
+                        ForEach(TorrentFilter.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
                 if let transfer {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .status) {
                         Text("↓ \(transfer.dl_info_speed.speed)  ↑ \(transfer.up_info_speed.speed)")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)

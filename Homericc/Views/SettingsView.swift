@@ -1,45 +1,30 @@
 import SwiftUI
 
+/// The Settings window (⌘,): one page per service.
 struct SettingsView: View {
     @Environment(ServiceStore.self) private var store
+    @Environment(AppNavigation.self) private var navigation
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
+        @Bindable var navigation = navigation
+        NavigationSplitView {
+            List(selection: $navigation.settingsSelection) {
+                Section("Services") {
                     ForEach(ServiceKind.allCases) { kind in
-                        NavigationLink(value: kind) {
-                            ServiceRow(kind: kind, isConfigured: store.isConfigured(kind))
-                        }
-                    }
-                } header: {
-                    Text("Services")
-                } footer: {
-                    Text("Pour chaque service, Homericc essaie d'abord l'adresse locale, puis l'adresse distante si tu n'es pas chez toi.")
-                }
-
-                if store.isConfigured(.prowlarr) {
-                    Section("Outils") {
-                        NavigationLink {
-                            ProwlarrView()
-                        } label: {
-                            Label("Indexeurs Prowlarr", systemImage: "magnifyingglass")
-                        }
-                    }
-                }
-
-                Section {
-                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "–")
-                    Link(destination: URL(string: "https://github.com/meric5488/Homericc")!) {
-                        Label("Code source sur GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                        ServiceRow(kind: kind, isConfigured: store.isConfigured(kind))
+                            .tag(kind)
                     }
                 }
             }
-            .navigationTitle("Réglages")
-            .navigationDestination(for: ServiceKind.self) { kind in
+            .navigationSplitViewColumnWidth(190)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            if let kind = navigation.settingsSelection {
                 ServiceEditView(kind: kind)
+                    .id(kind)
             }
         }
+        .frame(width: 720, height: 520)
     }
 }
 
@@ -64,12 +49,12 @@ private struct ServiceRow: View {
 struct ServiceEditView: View {
     let kind: ServiceKind
     @Environment(ServiceStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
 
     @State private var config: ServiceConfig
     @State private var secret = ""
     @State private var test: Loadable<ServiceStatus> = .idle
     @State private var confirmRemoval = false
+    @State private var saved = false
 
     init(kind: ServiceKind) {
         self.kind = kind
@@ -79,39 +64,25 @@ struct ServiceEditView: View {
     var body: some View {
         Form {
             Section {
-                TextField("http://192.168.1.10:\(kind.defaultPort)", text: $config.localURL)
-                    .textContentType(.URL)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
+                TextField("Adresse locale", text: $config.localURL,
+                          prompt: Text(verbatim: "http://192.168.1.10:\(kind.defaultPort)"))
+                    .autocorrectionDisabled()
+                TextField("Adresse distante", text: $config.remoteURL,
+                          prompt: Text(verbatim: "https://\(kind.rawValue).mondomaine.fr"))
                     .autocorrectionDisabled()
             } header: {
-                Text("Adresse locale")
+                Text("Adresses")
             } footer: {
-                Text("L'adresse sur ton réseau, avec le port. Laisse vide si tu n'en as pas.")
-            }
-
-            Section {
-                TextField("https://\(kind.rawValue).mondomaine.fr", text: $config.remoteURL)
-                    .textContentType(.URL)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-            } header: {
-                Text("Adresse distante")
-            } footer: {
-                Text("Utilisée quand l'adresse locale ne répond pas : nom de domaine, reverse proxy ou adresse Tailscale.")
+                Text("L'adresse locale (avec le port) est essayée en premier. L'adresse distante (nom de domaine, reverse proxy ou Tailscale) sert quand tu n'es pas chez toi. L'une des deux peut rester vide.")
             }
 
             Section {
                 switch kind.credential {
                 case .apiKey, .token:
                     SecureField(kind.credential == .token ? "Jeton Plex" : "Clé API", text: $secret)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
                 case .login:
                     TextField("Nom d'utilisateur", text: $config.username)
                         .textContentType(.username)
-                        .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     SecureField("Mot de passe", text: $secret)
                         .textContentType(.password)
@@ -124,47 +95,41 @@ struct ServiceEditView: View {
 
             Section {
                 Toggle("Activé", isOn: $config.isEnabled)
-                Button {
-                    Task { await runTest() }
-                } label: {
-                    HStack {
-                        Text("Tester la connexion")
-                        Spacer()
-                        testResult
-                    }
-                }
-                .disabled(config.candidateURLs.isEmpty)
             }
 
-            if store.configs[kind] != nil {
-                Section {
-                    Button("Supprimer ce service", role: .destructive) { confirmRemoval = true }
+            Section {
+                HStack {
+                    if store.configs[kind] != nil {
+                        Button("Supprimer…", role: .destructive) { confirmRemoval = true }
+                    }
+                    Spacer()
+                    testResult
+                    Button("Tester la connexion") { Task { await runTest() } }
+                        .disabled(config.candidateURLs.isEmpty)
+                    Button(saved ? "Enregistré" : "Enregistrer") {
+                        store.save(config, secret: secret)
+                        saved = true
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(config.candidateURLs.isEmpty || saved)
                 }
             }
         }
+        .formStyle(.grouped)
         .navigationTitle(kind.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Enregistrer") {
-                    store.save(config, secret: secret)
-                    dismiss()
-                }
-                .disabled(config.candidateURLs.isEmpty)
-            }
-        }
         .confirmationDialog("Supprimer \(kind.name) ?", isPresented: $confirmRemoval, titleVisibility: .visible) {
             Button("Supprimer", role: .destructive) {
                 store.remove(kind)
-                dismiss()
+                config = ServiceConfig(kind: kind)
+                secret = ""
             }
         }
         .onAppear {
             config = store.config(for: kind)
             secret = store.secret(for: kind)
         }
-        .onChange(of: config) { test = .idle }
-        .onChange(of: secret) { test = .idle }
+        .onChange(of: config) { test = .idle; saved = false }
+        .onChange(of: secret) { test = .idle; saved = false }
     }
 
     @ViewBuilder private var testResult: some View {

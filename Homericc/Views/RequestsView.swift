@@ -4,8 +4,7 @@ struct RequestsView: View {
     @Environment(ServiceStore.self) private var store
 
     var body: some View {
-        NavigationStack {
-            Group {
+        Group {
                 if let connection = store.connection(for: .seerr) {
                     SeerrView(api: SeerrAPI(connection: connection))
                         .id(store.revision)
@@ -13,8 +12,7 @@ struct RequestsView: View {
                     NotConfiguredView(kinds: [.seerr])
                 }
             }
-            .navigationTitle("Demandes")
-        }
+        .navigationTitle("Demandes")
     }
 }
 

@@ -43,6 +43,7 @@ struct PosterImage: View {
 struct NotConfiguredView: View {
     let kinds: [ServiceKind]
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         ContentUnavailableView {
@@ -50,7 +51,10 @@ struct NotConfiguredView: View {
         } description: {
             Text("Ajoute l'adresse et la clé du serveur dans les réglages.")
         } actions: {
-            Button("Ouvrir les réglages") { navigation.tab = .settings }
+            Button("Ouvrir les réglages…") {
+                navigation.settingsSelection = kinds.first
+                openSettings()
+            }
                 .buttonStyle(.borderedProminent)
         }
     }

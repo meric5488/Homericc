@@ -1,35 +1,19 @@
 import SwiftUI
 
 struct LibraryView: View {
+    let kind: ServiceKind
     @Environment(ServiceStore.self) private var store
-    @AppStorage("library.kind") private var kind: ServiceKind = .radarr
-
-    private let kinds: [ServiceKind] = [.radarr, .sonarr, .lidarr]
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let connection = store.connection(for: kind) {
-                    ArrLibraryView(api: ArrAPI(connection: connection))
-                        .id("\(kind)-\(store.revision)")
-                } else {
-                    NotConfiguredView(kinds: [kind])
-                }
+        Group {
+            if let connection = store.connection(for: kind) {
+                ArrLibraryView(api: ArrAPI(connection: connection))
+                    .id(store.revision)
+            } else {
+                NotConfiguredView(kinds: [kind])
             }
-            .navigationTitle(kind.role)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Bibliothèque", selection: $kind) {
-                        ForEach(kinds) { kind in
-                            Text(kind.role).tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .navigationTitle(kind.role)
     }
 }
 
@@ -73,7 +57,7 @@ struct ArrLibraryView: View {
             .refreshable { await load() }
             .task { if items.value == nil { await load() } }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem {
                     Menu {
                         Picker("Trier par", selection: $sort) {
                             ForEach(LibrarySort.allCases) { Text($0.label).tag($0) }
@@ -114,7 +98,7 @@ struct ArrLibraryView: View {
                 ContentUnavailableView.search(text: query)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 12)], spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 20) {
                         ForEach(visible) { item in
                             NavigationLink(value: item.id) {
                                 PosterCell(item: item)
@@ -197,7 +181,7 @@ struct ArrItemDetailView: View {
             Section {
                 HStack(alignment: .top, spacing: 16) {
                     PosterImage(url: item.posterURL, symbol: item.kind.symbol)
-                        .frame(width: 110)
+                        .frame(width: 160)
                     VStack(alignment: .leading, spacing: 6) {
                         Text(item.title).font(.title3.bold())
                         if let year = item.year { Text(String(year)).foregroundStyle(.secondary) }
@@ -247,7 +231,6 @@ struct ArrItemDetailView: View {
             }
         }
         .navigationTitle(item.title)
-        .navigationBarTitleDisplayMode(.inline)
         .errorAlert(runner)
         .confirmationDialog("Supprimer « \(item.title) » ?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Retirer de \(item.kind.name)", role: .destructive) { delete(files: false) }

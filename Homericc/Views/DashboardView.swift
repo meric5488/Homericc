@@ -3,6 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(ServiceStore.self) private var store
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.openSettings) private var openSettings
 
     @State private var statuses: [ServiceKind: Result<ServiceStatus, Error>] = [:]
     @State private var sessions: [PlexItem] = []
@@ -16,23 +17,21 @@ struct DashboardView: View {
     private var plex: PlexAPI? { store.connection(for: .plex).map(PlexAPI.init) }
 
     var body: some View {
-        NavigationStack {
-            Group {
+        Group {
                 if configured.isEmpty {
                     ContentUnavailableView {
                         Label("Bienvenue dans Homericc", systemImage: "house")
                     } description: {
                         Text("Ajoute tes serveurs Radarr, Sonarr, Plex, qBittorrent… pour tout piloter d'ici, chez toi comme à l'extérieur.")
                     } actions: {
-                        Button("Configurer mes services") { navigation.tab = .settings }
+                        Button("Configurer mes services…") { openSettings() }
                             .buttonStyle(.borderedProminent)
                     }
                 } else {
                     dashboard
                 }
             }
-            .navigationTitle("Accueil")
-        }
+        .navigationTitle("Accueil")
     }
 
     private var dashboard: some View {
@@ -53,7 +52,7 @@ struct DashboardView: View {
 
             if store.isConfigured(.qbittorrent) {
                 Section("Téléchargements") {
-                    Button { navigation.tab = .downloads } label: {
+                    Button { navigation.selection = .downloads } label: {
                         LabeledContent {
                             if let transfer {
                                 Text("↓ \(transfer.dl_info_speed.speed)").monospacedDigit()
@@ -69,7 +68,7 @@ struct DashboardView: View {
 
             if store.isConfigured(.seerr) {
                 Section("Demandes") {
-                    Button { navigation.tab = .requests } label: {
+                    Button { navigation.selection = .requests } label: {
                         Label(pendingRequests == 0 ? "Aucune demande en attente" : "\(pendingRequests) en attente d'approbation",
                               systemImage: "hand.raised")
                     }
